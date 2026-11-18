@@ -9,7 +9,7 @@ const { CourtMonitor, UserError } = require('../src/monitor.cjs');
 const { sendPush } = require('../src/push.cjs');
 const { decodePushConnection, feishuConnection } = require('../src/push-connection.cjs');
 const { Preferences } = require('../src/preferences.cjs');
-const { beijingDay, slotKey, validOptions } = require('../src/courts.cjs');
+const { beijingDay, nextBookingRelease, slotKey, validOptions } = require('../src/courts.cjs');
 
 const baselineTime = Date.parse('2026-11-18T13:10:00+08:00');
 const slot = (court, venue = '57', start = '17:00') => ({ venue, date: '2026-11-18', start, end: '18:00', court, price: 25 });
@@ -54,7 +54,7 @@ test('suspend and resume do not resend a push already handed to the provider', a
   const underway = deferred();
   const response = deferred();
   let sends = 0;
-  let avail = stamped(slot(1));
+  let avail = { ...stamped(slot(1)), reserved: [slot(2)] };
   const monitor = setup(t, {
     async checkVenue() { return avail; },
     async dispatch() { if (++sends === 1) { underway.resolve(); await response.promise; } return accepted; },
@@ -74,7 +74,7 @@ test('suspend and resume do not resend a push already handed to the provider', a
 
 test('a rate limit confirmed during sleep preserves the retry and rechecks what is still free', async t => {
   let now = baselineTime;
-  let avail = stamped(slot(1));
+  let avail = { ...stamped(slot(1)), reserved: [slot(2), slot(3)] };
   const underway = deferred();
   const limited = deferred();
   const sent = [];
@@ -113,7 +113,10 @@ test('a late retry from a paused campus is discarded on switching campuses', asy
   const sent = [];
   let courts = [1];
   const monitor = setup(t, {
-    async checkVenue(id) { return stamped(...courts.map(court => slot(court, id))); },
+    async checkVenue(id) {
+      const reserved = [2, 3].filter(court => !courts.includes(court)).map(court => slot(court, id));
+      return { ...stamped(...courts.map(court => slot(court, id))), reserved };
+    },
     async dispatch(message) {
       sent.push(message);
       if (sent.length !== 1) return accepted;
@@ -136,7 +139,7 @@ test('a late retry from a paused campus is discarded on switching campuses', asy
   courts = [1, 2, 3];
   await monitor.check();
   assert.equal(sent.length, 2);
-  assert.match(sent[1].title, /学院路校区新增 2 场次/);
+  assert.match(sent[1].title, /学院路校区疑似退订 2 场次/);
   assert.doesNotMatch(sent[1].content, /venue-reservation\/57/);
 });
 
@@ -147,7 +150,7 @@ test('one bad venue leaves the healthy venue on its configured cadence', async t
     options: { campus: 'xueyuanlu', interval: 2 },
     async checkVenue(id) {
       if (broken && id === '38') throw new Error('offline');
-      return stamped(slot(broken ? 19 : 18, id));
+      return broken ? stamped(slot(19, id)) : { ...stamped(slot(18, id)), reserved: [slot(19, id)] };
     },
     async dispatch(message) { messages.push(message); return accepted; },
   });
@@ -171,7 +174,7 @@ test('reconnecting does not display a previous session’s availability', async 
 });
 
 test('a thrown push adapter error leaves polling active and avoids blind retransmission', async t => {
-  let booking = stamped(slot(1));
+  let booking = { ...stamped(slot(1)), reserved: [slot(2)] };
   let attempts = 0;
   const monitor = setup(t, {
     async checkVenue() { return booking; },
@@ -188,7 +191,7 @@ test('a thrown push adapter error leaves polling active and avoids blind retrans
 
 test('rate-limited notifications wait and discard slots that are sold in the meantime', async t => {
   let now = baselineTime;
-  let booking = stamped(slot(1));
+  let booking = { ...stamped(slot(1)), reserved: [slot(2), slot(3), slot(4)] };
   const messages = [];
   const monitor = setup(t, {
     now: () => now,
@@ -199,7 +202,7 @@ test('rate-limited notifications wait and discard slots that are sold in the mea
     },
   });
   await monitor.check();
-  booking = stamped(slot(1), slot(2), slot(3));
+  booking = { ...stamped(slot(1), slot(2), slot(3)), reserved: [slot(4)] };
   await monitor.check();
   now += 120000;
   booking = stamped(slot(1), slot(3), slot(4));
@@ -212,7 +215,7 @@ test('rate-limited notifications wait and discard slots that are sold in the mea
   assert.doesNotMatch(messages[1].content, /2号/);
 });
 
-test('a rate-limited reopening keeps its type and waits before sending either batch', async t => {
+test('a rate-limited reopening is retried without including an unobserved green slot', async t => {
   let now = baselineTime;
   let booking = { ...stamped(slot(1)), reserved: [slot(4)] };
   const messages = [];
@@ -233,10 +236,10 @@ test('a rate-limited reopening keeps its type and waits before sending either ba
   now += 30000;
   await monitor.check();
   assert.deepEqual(messages.map(message => message.title), [
-    '候羽｜沙河校区疑似退订 1 场次', '候羽｜沙河校区疑似退订 1 场次', '候羽｜沙河校区新增 1 场次',
+    '候羽｜沙河校区疑似退订 1 场次', '候羽｜沙河校区疑似退订 1 场次',
   ]);
   assert.match(messages[1].markdown, /4号/);
-  assert.match(messages[2].markdown, /2号/);
+  assert.doesNotMatch(messages[1].markdown, /2号/);
 });
 
 test('PushPlus transient, rejected and malformed responses are distinguished', async () => {
@@ -335,10 +338,62 @@ test('changing the interval during a read applies after the in-flight check', as
   assert.equal(monitor.state().nextAt, now + 420000);
 });
 
+test('the morning refresh records newly published slots and alerts only for a verified reopening', async t => {
+  const release = Date.parse('2026-11-18T07:00:00+08:00');
+  let now = release - 120000;
+  const newSlot = { ...slot(4), date: '2026-11-20' };
+  let booking = { ...stamped(slot(1)), reserved: [slot(2)] };
+  const messages = [];
+  const monitor = setup(t, {
+    options: { campus: 'shahe', interval: 30 },
+    now: () => now,
+    async checkVenue() { return booking; },
+    async dispatch(message) { messages.push(message); return accepted; },
+  });
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, release);
+  now = release;
+  booking = { dates: ['2026-11-18', '2026-11-20'], slots: [slot(1), slot(2), newSlot] };
+  await monitor.check();
+  assert.equal(monitor.state().slotCount, 3);
+  assert.equal(monitor.state().nextAt, release + 1800000);
+  assert.deepEqual(messages.map(message => message.title), ['候羽｜沙河校区疑似退订 1 场次']);
+  assert.match(messages[0].content, /2号/);
+  assert.doesNotMatch(messages[0].content, /4号|11月20日/);
+  await monitor.check();
+  assert.equal(messages.length, 1);
+});
+
+test('a scan straddling the morning release runs one fresh check immediately afterward', async t => {
+  const release = Date.parse('2026-11-18T07:00:00+08:00');
+  let now = release - 1000;
+  const read = deferred();
+  const monitor = setup(t, { now: () => now, async checkVenue() { return read.promise; } });
+  const reading = monitor.check();
+  now = release + 1500;
+  read.resolve(stamped());
+  await reading;
+  assert.equal(monitor.state().nextAt, now);
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, now + 120000);
+});
+
 test('a long user-set interval is not silently shortened by the outage backoff cap', async t => {
   const monitor = setup(t, { options: { campus: 'shahe', interval: 1440 }, async checkVenue() { throw new Error('network down'); } });
   await monitor.check();
-  assert.equal(monitor.state().nextAt, baselineTime + 86400000);
+  assert.equal(monitor.pollDelay(), 86400000);
+  assert.equal(monitor.state().nextAt, nextBookingRelease(baselineTime));
+});
+
+test('editing the interval before 07:00 preserves the original regular-check anchor', async t => {
+  const release = Date.parse('2026-11-18T07:00:00+08:00');
+  let now = release - 600000;
+  const monitor = setup(t, { now: () => now, options: { campus: 'shahe', interval: 30 } });
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, release);
+  now += 60000;
+  monitor.setOptions({ campus: 'shahe', interval: 5 });
+  assert.equal(monitor.state().nextAt, release - 300000);
 });
 
 test('started slots disappear from a snapshot without any network call', async t => {
@@ -367,17 +422,20 @@ test('10000 scheduled cycles tolerate rolling dates, availability changes and ne
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     down = round % 13 < 3;
     const date = beijingDay(now + 86400000);
-    const slots = [1, 2, 3, 4, 5, 6, 7, 8].filter(court => (seed >>> (court + 12)) & 1).map(court => ({ ...slot(court), date }));
-    booking = { slots, dates: [date] };
+    const courts = [1, 2, 3, 4, 5, 6, 7, 8].map(court => ({ ...slot(court), date }));
+    const isAvailable = ({ court }) => Boolean((seed >>> (court + 12)) & 1);
+    const slots = courts.filter(isAvailable);
+    const reserved = courts.filter(court => !isAvailable(court) && Boolean((seed >>> (court.court + 3)) & 1));
+    booking = { slots, reserved, dates: [date] };
     if (!down) {
-      if (previous && slots.some(court => !previous.has(slotKey(court)))) expectedSent++;
-      previous = new Set(slots.map(slotKey));
+      if (previous && slots.some(court => previous.has(slotKey(court)))) expectedSent++;
+      previous = new Set(reserved.map(slotKey));
     }
     await monitor.check();
     const state = monitor.state();
     assert.equal(state.slotCount, down ? 0 : slots.length);
     assert.equal(sent, expectedSent);
-    assert.ok(state.nextAt >= now + 120000);
+    assert.ok(state.nextAt >= Math.min(now + 120000, nextBookingRelease(now)));
     assert.ok(state.nextAt <= now + 900000);
     assert.equal(monitor.task, null);
     assert.equal(monitor.pending.size, 0);

@@ -1,6 +1,6 @@
 'use strict';
 
-const { CAMPUSES, VENUES, groupSlots, slotKey, startsAt } = require('./courts.cjs');
+const { CAMPUSES, VENUES, groupSlots, nextBookingRelease, slotKey, startsAt } = require('./courts.cjs');
 const { notice } = require('./push.cjs');
 
 class UserError extends Error {
@@ -21,12 +21,13 @@ class CourtMonitor {
     this.running = false;
     this.suspended = false;
     this.nextAt = null;
+    this.nextRegularAt = null;
     this.lastAt = null;
     this.timer = null;
     this.task = null;
     this.cyclesWithErrors = 0;
     this.snapshots = new Map();
-    this.previous = new Map();
+    this.previousReservations = new Map();
     this.pending = new Map();
     this.pushNotBefore = 0;
     this.delivery = { configured: false, persistent: false, status: 'off', text: '', at: null };
@@ -61,7 +62,7 @@ class CourtMonitor {
     }
     this.options = options;
     if (this.running && intervalChanged && this.nextAt > this.now()) {
-      const updated = this.nextAt - previousDelay + this.pollDelay();
+      const updated = this.nextRegularAt - previousDelay + this.pollDelay();
       this.schedule(Math.max(0, updated - this.now()));
       return;
     }
@@ -109,13 +110,14 @@ class CourtMonitor {
     clearTimeout(this.timer);
     this.timer = null;
     this.nextAt = null;
+    this.nextRegularAt = null;
     this.task?.abort();
   }
 
   stop(announce = true) {
     this.running = false;
     this.interrupt();
-    this.previous.clear();
+    this.previousReservations.clear();
     this.pending = new Map();
     if (announce) this.emit();
   }
@@ -132,9 +134,12 @@ class CourtMonitor {
     clearTimeout(this.timer);
     this.timer = null;
     this.nextAt = null;
+    this.nextRegularAt = null;
     if (this.running && !this.suspended && !this.task) {
-      this.nextAt = this.now() + delay;
-      this.timer = setTimeout(() => void this.check(), delay);
+      const now = this.now();
+      this.nextRegularAt = now + delay;
+      this.nextAt = Math.min(this.nextRegularAt, nextBookingRelease(now));
+      this.timer = setTimeout(() => void this.check(), this.nextAt - now);
     }
     this.emit();
   }
@@ -147,54 +152,44 @@ class CourtMonitor {
   applySnapshot(id, sample) {
     const now = this.now();
     const upcoming = sample.slots.filter(slot => startsAt(slot) > now);
-    const prior = this.previous.get(id);
-    const available = new Map(upcoming.map(slot => [slotKey(slot), slot]));
-    const reserved = new Set((sample.reserved ?? []).map(slotKey));
+    const prior = this.previousReservations.get(id);
     this.snapshots.set(id, { at: now, dates: sample.dates, slots: upcoming, error: '' });
     if (prior && this.delivery.configured) {
+      const available = new Map(upcoming.map(slot => [slotKey(slot), slot]));
       for (const [key, item] of this.pending) {
         if (item.venue === id && !available.has(key)) this.pending.delete(key);
       }
       for (const [key, slot] of available) {
-        const queued = this.pending.get(key);
-        if (prior.available.has(key) && !queued) continue;
-        this.pending.set(key, { ...slot, reopened: queued?.reopened || prior.reserved.has(key) });
+        if (prior.has(key) || this.pending.has(key)) this.pending.set(key, slot);
       }
     }
-    this.previous.set(id, { available, reserved });
+    this.previousReservations.set(id, new Set((sample.reserved ?? []).map(slotKey)));
   }
 
   async notifyPending(failedVenues, signal) {
     const pending = this.pending;
-    const reopenedSlots = [];
-    const otherSlots = [];
+    const now = this.now();
+    const batch = [];
     for (const [key, slot] of pending) {
-      if (startsAt(slot) <= this.lastAt) pending.delete(key);
-      else if (!failedVenues.has(slot.venue)) (slot.reopened ? reopenedSlots : otherSlots).push(slot);
+      if (startsAt(slot) <= now) pending.delete(key);
+      else if (!failedVenues.has(slot.venue)) batch.push(slot);
     }
-    for (const [slots, reopened] of [[reopenedSlots, true], [otherSlots, false]]) {
-      if (!slots.length) continue;
-      const now = this.now();
-      if (signal.aborted || this.pending !== pending || !this.delivery.configured ||
-          this.delivery.status === 'blocked' || now < this.pushNotBefore) return;
-      const batch = slots.filter(slot => startsAt(slot) > now);
-      // After dispatch, an interrupted request may already have been accepted.
-      for (const slot of slots) pending.delete(slotKey(slot));
-      if (!batch.length) continue;
-      let result;
-      try {
-        result = await this.dispatch(notice(this.options.campus, batch, now, { reopened }), signal);
-      } catch {
-        result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
-      }
-      // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
-      if (this.pending !== pending) return;
-      if (result.kind === 'retry' || result.kind === 'blocked') {
-        for (const slot of batch) pending.set(slotKey(slot), slot);
-      }
-      this.recordDelivery(result);
-      if (result.kind !== 'accepted') return;
+    if (!batch.length || signal.aborted || !this.delivery.configured ||
+        this.delivery.status === 'blocked' || now < this.pushNotBefore) return;
+    // After dispatch, an interrupted request may already have been accepted.
+    for (const slot of batch) pending.delete(slotKey(slot));
+    let result;
+    try {
+      result = await this.dispatch(notice(this.options.campus, batch, now), signal);
+    } catch {
+      result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
     }
+    // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
+    if (this.pending !== pending) return;
+    if (result.kind === 'retry' || result.kind === 'blocked') {
+      for (const slot of batch) pending.set(slotKey(slot), slot);
+    }
+    this.recordDelivery(result);
   }
 
   async check() {
@@ -202,8 +197,10 @@ class CourtMonitor {
     clearTimeout(this.timer);
     this.timer = null;
     const task = new AbortController();
+    const releaseAt = nextBookingRelease(this.now());
     this.task = task;
     this.nextAt = null;
+    this.nextRegularAt = null;
     this.emit();
     const failed = new Set();
     const venueIds = CAMPUSES[this.options.campus].venues;
@@ -231,7 +228,7 @@ class CourtMonitor {
       if (this.task === task) {
         this.task = null;
         if (!task.signal.aborted) this.cyclesWithErrors = failed.size === venueIds.length ? Math.min(this.cyclesWithErrors + 1, 3) : 0;
-        this.schedule(task.signal.aborted ? 0 : this.pollDelay());
+        this.schedule(task.signal.aborted || this.now() >= releaseAt ? 0 : this.pollDelay());
       }
     }
   }

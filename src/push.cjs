@@ -66,7 +66,7 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
 
-function notice(campus, slots, at, { reopened = false } = {}) {
+function notice(campus, slots, at) {
   const site = CAMPUSES[campus];
   const groups = groupSlots(slots);
   const details = groups.slice(0, 18).map(group => {
@@ -80,16 +80,13 @@ function notice(campus, slots, at, { reopened = false } = {}) {
   const markdownLinks = venues.map(id => `[${VENUES[id].label}预约页](${venueUrl(id)})`).join(' · ');
   const feishuLinks = venues.map(id => `[${VENUES[id].label} ↗](${venueUrl(id)})`);
   const statusChange = '官网状态从已预约变为绿色可约。';
-  const heading = reopened ? statusChange : `${productName}于 ${beijingClock(at)}（北京时间）发现以下空场。`;
   const footer = '余量随时变化，请以预约页为准。';
-  const typeLabel = reopened ? '疑似退订' : '新增';
-  const title = `${productName}｜${site.label}${typeLabel} ${slots.length} 场次`;
-  const elements = feishuAvailability(groups, feishuLinks);
-  if (reopened) elements.unshift(markdownBlock(statusChange));
+  const title = `${productName}｜${site.label}疑似退订 ${slots.length} 场次`;
+  const elements = [markdownBlock(statusChange), ...feishuAvailability(groups, feishuLinks)];
   return {
     title,
-    content: `<p>${escapeHtml(heading)}</p><ul>${details.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>${more ? `<p>${more}</p>` : ''}<p>${links}</p><p>${footer}</p>`,
-    markdown: [heading, details.map(line => `- ${line}`).join('\n'), more, markdownLinks, footer].filter(Boolean).join('\n\n'),
+    content: `<p>${statusChange}</p><ul>${details.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>${more ? `<p>${more}</p>` : ''}<p>${links}</p><p>${footer}</p>`,
+    markdown: [statusChange, details.map(line => `- ${line}`).join('\n'), more, markdownLinks, footer].filter(Boolean).join('\n\n'),
     feishuCard: feishuCard(title, at, elements),
   };
 }

@@ -7,6 +7,7 @@ const { mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, protocol, session } = require('electron');
 const { readBookingPage, signedInOnBookingSite } = require('../src/site-page.cjs');
+const { beijingClock, calendarDates } = require('../src/courts.cjs');
 
 const target = path.resolve(process.argv.at(-1));
 mkdirSync(target, { recursive: true });
@@ -107,15 +108,16 @@ async function run() {
   const preferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false };
   const page = new BrowserWindow({ show: false, webPreferences: preferences });
   const clock = hour => `${String(hour).padStart(2, '0')}:00`;
-  async function readFixture(spec) {
+  async function readFixture(spec, at = Date.parse('2026-11-18T14:08:00+08:00')) {
     const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved,.reservation{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
       <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div>
-      <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div><span>11月20日</span></div></div>
+      <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div ${spec.disableThirdDay ? 'aria-disabled="true"' : ''}><span>11月20日</span></div></div>
       <div class="spaceTable"><table></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
     await page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHtml)}`);
     assert.equal(await page.webContents.executeJavaScriptInIsolatedWorld(1201, [{ code: `(${signedInOnBookingSite.toString()})()` }]), true);
+    const readOptions = { bookableLabels: [...calendarDates(at).keys()], nowClock: beijingClock(at) };
     return page.webContents.executeJavaScriptInIsolatedWorld(1201, [{
-      code: `(${readBookingPage.toString()})({ todayLabel: '11月18日', nowClock: '14:08' })`,
+      code: `(${readBookingPage.toString()})(${JSON.stringify(readOptions)})`,
     }]);
   }
   for (const spec of auditedVenues) {
@@ -125,6 +127,14 @@ async function run() {
     const expected = spec.slots.flatMap(([day, hour, courts]) => courts.map(court => `${day}/${clock(hour)}/${clock(hour + 1)}/${court}/15`));
     assert.deepEqual(actual.sort(), expected.sort());
   }
+  const morning = Date.parse('2026-11-18T07:00:00+08:00');
+  const beforeRelease = await readFixture(auditedVenues[2], morning - 1);
+  assert.deepEqual(beforeRelease.days.map(day => day.label), ['11月18日', '11月19日']);
+  const afterRelease = await readFixture(auditedVenues[2], morning);
+  assert.deepEqual(afterRelease.days.map(day => day.label), ['11月18日', '11月19日', '11月20日']);
+  assert.ok(afterRelease.days[2].slots.length > 0, 'the newly released day is read even when play starts at 08:00');
+  const disabledAfterRelease = await readFixture({ ...auditedVenues[2], disableThirdDay: true }, morning);
+  assert.deepEqual(disabledAfterRelease.days.map(day => day.label), ['11月18日', '11月19日']);
   const conflict = await readFixture({ ...auditedVenues[2], inconsistentFill: 'rgb(225, 225, 225)' });
   assert.deepEqual(conflict, { error: 'colors' });
   const afterClosure = await readFixture({ ...auditedVenues[1], closed: [0], switchDelay: 650 });

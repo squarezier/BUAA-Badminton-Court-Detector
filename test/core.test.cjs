@@ -23,6 +23,15 @@ test('normalizes Beijing dates across a year boundary and validates visible cour
   assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [{ ...row, court: '3' }] }], now));
 });
 
+test('the third calendar day opens at 07:00 Beijing time even across a year boundary', () => {
+  const release = Date.parse('2026-12-31T07:00:00+08:00');
+  assert.deepEqual([...calendarDates(release - 1).values()], ['2026-12-31', '2027-01-01']);
+  assert.deepEqual([...calendarDates(release).values()], ['2026-12-31', '2027-01-01', '2027-01-02']);
+  const newDay = { label: '1月2日', slots: [{ court: 4, start: '08:00', end: '09:00', price: 15 }] };
+  assert.throws(() => validatedSnapshot('57', [newDay], release - 1));
+  assert.equal(validatedSnapshot('57', [newDay], release).slots[0].date, '2027-01-02');
+});
+
 test('validated snapshots keep confirmed reservations separate from green slots', () => {
   const reserved = { court: 4, start: '17:00', end: '18:00' };
   const available = { ...reserved, court: 5, price: 25 };
@@ -33,7 +42,7 @@ test('validated snapshots keep confirmed reservations separate from green slots'
   assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [], reserved: [{ ...reserved, start: '25:00' }] }], now));
 });
 
-test('a first sample establishes a baseline and only new slots are sent', async t => {
+test('initial availability and a newly published green slot do not send a notice', async t => {
   let response = sample(slot(1));
   const pushes = [];
   const monitor = new CourtMonitor({
@@ -50,10 +59,8 @@ test('a first sample establishes a baseline and only new slots are sent', async 
   response = sample(slot(1), slot(3), slot(5));
   await monitor.check();
   await monitor.check();
-  assert.equal(pushes.length, 1);
-  assert.equal(pushes[0].title, '候羽｜沙河校区新增 2 场次');
-  assert.match(pushes[0].content, /3、5号/);
-  assert.doesNotMatch(pushes[0].content, /1号/);
+  assert.equal(pushes.length, 0);
+  assert.equal(monitor.state().slotCount, 3);
 });
 
 test('a confirmed reservation reopening gets a distinct alert for the exact venue and slot', async t => {
@@ -80,21 +87,19 @@ test('a confirmed reservation reopening gets a distinct alert for the exact venu
   response.set('39', sample(slot(3, '39')));
   await monitor.check();
   await monitor.check();
-  assert.deepEqual(pushes.map(message => message.title), ['候羽｜学院路校区疑似退订 1 场次', '候羽｜学院路校区新增 2 场次']);
+  assert.deepEqual(pushes.map(message => message.title), ['候羽｜学院路校区疑似退订 1 场次']);
   const card = pushes[0].feishuCard.body.elements.map(element => element.content).join('\n');
   assert.match(card, /已预约.*绿色可约/);
   assert.match(card, /11月18日[\s\S]*17:00–18:00 · 体育馆主馆[\s\S]*场号 \*\*3 号\*\*[\s\S]*¥25\/场/);
   assert.match(card, /venue-reservation\/38/);
   assert.doesNotMatch(card, /11月19日|训练馆|venue-reservation\/39|1 号/);
-  assert.match(pushes[1].markdown, /11月19日/);
-  assert.match(pushes[1].markdown, /体育馆训练馆/);
 
   response.set('38', { ...sample(slot(1, '38'), openingNextDay), reserved: [reserved] });
   await monitor.check();
   response.set('38', sample(slot(1, '38'), reserved, openingNextDay));
   await monitor.check();
-  assert.equal(pushes.length, 3);
-  assert.equal(pushes[2].title, pushes[0].title, 'a second verified reservation and release is a new event');
+  assert.equal(pushes.length, 2);
+  assert.equal(pushes[1].title, pushes[0].title, 'a second verified reservation and release is a new event');
 });
 
 test('unverified venue data is hidden, with no false alerts on recovery', async t => {
@@ -158,7 +163,7 @@ test('ServerChan sends markdown over HTTPS and handles throttling without blind 
     assert.equal(url, `https://sctapi.ftqq.com/${key}.send`);
     assert.equal(request.method, 'POST');
     assert.equal(request.redirect, 'error');
-    assert.equal(request.body.get('title'), '候羽｜沙河校区新增 2 场次');
+    assert.equal(request.body.get('title'), '候羽｜沙河校区疑似退订 2 场次');
     assert.match(request.body.get('desp'), /3、5号/);
     assert.match(request.body.get('desp'), /\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/);
     return Response.json({ code: 0 });
@@ -204,10 +209,11 @@ test('Feishu sends a signed availability card with the official booking link', a
     assert.equal(payload.msg_type, 'interactive');
     const { schema, header, body: { elements } } = payload.card;
     assert.equal(schema, '2.0');
-    assert.equal(header.title.content, '候羽｜沙河校区新增 2 场次');
-    assert.match(elements[0].content, /\*\*11月18日 周三\*\*/);
-    assert.match(elements[0].content, /\*\*17:00–18:00 · 综合馆\*\*/);
-    assert.match(elements[0].content, /场号 \*\*3、5 号\*\*.*¥25\/场/u);
+    assert.equal(header.title.content, '候羽｜沙河校区疑似退订 2 场次');
+    assert.match(elements[0].content, /已预约变为绿色可约/);
+    assert.match(elements[1].content, /\*\*11月18日 周三\*\*/);
+    assert.match(elements[1].content, /\*\*17:00–18:00 · 综合馆\*\*/);
+    assert.match(elements[1].content, /场号 \*\*3、5 号\*\*.*¥25\/场/u);
     assert.match(elements.at(-1).content, /\[综合馆 ↗\]\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/u);
     return Response.json({ code: 0 });
   };
@@ -218,8 +224,8 @@ test('Feishu lists each date separately and caps large notices within the reques
   const first = { ...slot(3, '38'), date: '2026-11-19' };
   const second = { ...slot(5, '39'), date: '2026-11-20', price: 0 };
   const elements = notice('xueyuanlu', [second, first], now).feishuCard.body.elements;
-  assert.match(elements[0].content, /11月19日 周四[\s\S]*体育馆主馆[\s\S]*3 号/u);
-  assert.match(elements[1].content, /11月20日 周五[\s\S]*体育馆训练馆[\s\S]*5 号[\s\S]*免费/u);
+  assert.match(elements[1].content, /11月19日 周四[\s\S]*体育馆主馆[\s\S]*3 号/u);
+  assert.match(elements[2].content, /11月20日 周五[\s\S]*体育馆训练馆[\s\S]*5 号[\s\S]*免费/u);
   const crowded = Array.from({ length: 30 }, (_, index) =>
     Array.from({ length: 120 }, (_, court) => ({
       ...slot(court + 1, '38'), date: index < 15 ? first.date : second.date, price: index + 1,

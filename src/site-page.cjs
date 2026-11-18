@@ -8,13 +8,18 @@ function signedInOnBookingSite() {
   return authenticated;
 }
 
-async function readBookingPage({ todayLabel, nowClock }) {
+async function readBookingPage({ bookableLabels, nowClock }) {
+  const todayLabel = bookableLabels[0];
+  const bookable = new Set(bookableLabels);
   const timePattern = /\b(\d{2}:\d{2})\s*[-–—~～]\s*(\d{2}:\d{2})\b/;
-  const datePattern = /^\d{1,2}月\d{1,2}日$/;
   const visible = element => element.checkVisibility({ opacityProperty: true, visibilityProperty: true });
   const dateButtons = () => [...document.querySelectorAll('.date_box > div')].filter(button =>
-    visible(button) && datePattern.test(labelOf(button)));
-  const labelOf = button => button?.querySelector('span')?.textContent.trim() ?? '';
+    visible(button) && bookable.has(labelOf(button)) && !button.matches('.disabled, [disabled], [aria-disabled="true"]'));
+  const labelOf = button => {
+    const text = button?.querySelector('span')?.textContent.trim() ?? '';
+    const match = text.match(/^(\d{1,2})月(\d{1,2})日$/);
+    return match ? `${Number(match[1])}月${Number(match[2])}日` : '';
+  };
   const activeDate = () => labelOf(dateButtons().find(button => button.classList.contains('active')));
   const busySelector = '.spaceTable .ivu-spin-fix, .ivu-table-wrapper > .ivu-spin-fix';
   const busy = () => [...document.querySelectorAll(busySelector)].some(visible);
@@ -154,7 +159,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
   if (!loaded) return { error: 'layout' };
   const [opening, closing] = operatingHours();
   const labels = dateButtons().map(labelOf);
-  if (labels.length > 7 || ![opening, closing, nowClock].every(validClock) || mins(opening) >= mins(closing)) return { error: 'layout' };
+  if (labels.length > bookable.size || ![opening, closing, nowClock].every(validClock) || mins(opening) >= mins(closing)) return { error: 'layout' };
   const days = [];
 
   for (const label of labels) {

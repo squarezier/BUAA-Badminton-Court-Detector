@@ -6,7 +6,7 @@ const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
-const { calendarDates } = require('../src/courts.cjs');
+const { beijingDay, calendarDates } = require('../src/courts.cjs');
 
 const profile = path.resolve(process.argv.at(-1));
 const legacyToken = 'SCTtest-houyu-local-token-01';
@@ -15,10 +15,10 @@ const feishuCiphertext = Buffer.from('feishu-test-connection');
 const webhook = 'https://open.feishu.cn/open-apis/bot/v2/hook/11111111-2222-4333-8444-555555555555';
 const secret = 'synthetic-feishu-signing-key';
 const campusOrigin = 'https://cgyy.buaa.edu.cn';
-const label = [...calendarDates(Date.now()).keys()][1];
 const wallClock = Date.now;
-let testClockOffset = 0;
+let testClockOffset = Date.parse(`${beijingDay(wallClock())}T13:10:00+08:00`) - wallClock();
 Date.now = () => wallClock() + testClockOffset;
+const label = [...calendarDates(Date.now()).keys()][1];
 let rejectSignature = false;
 let pushRequests = 0;
 let visibleCourts = [1];
@@ -190,15 +190,12 @@ async function run(win) {
   assert.equal(win.isVisible(), false);
   visibleCourts = [1, 2, 4];
   wake();
-  await waitFor(view => view.slotCount === 3 && !view.checking && pushed.length === 3, 'separate reopened and new slots while hidden');
+  await waitFor(view => view.slotCount === 3 && !view.checking && pushed.length === 2, 'only reopened slots are sent while hidden');
   assert.equal(pushed[1].title, '候羽｜沙河校区疑似退订 1 场次');
   assert.match(pushed[1].content, /已预约.*绿色可约/);
   assert.match(pushed[1].content, /07:00–08:00 · 综合馆[\s\S]*场号 \*\*4 号\*\*.*¥15\/场/);
   assert.match(pushed[1].content, /venue-reservation\/57/);
   assert.doesNotMatch(pushed[1].content, /1 号|2 号/);
-  assert.equal(pushed[2].title, '候羽｜沙河校区新增 1 场次');
-  assert.match(pushed[2].content, /2 号/);
-  assert.doesNotMatch(pushed[2].content, /4 号/);
   app.emit('activate');
   assert.equal(win.isVisible(), true);
   cases++;
@@ -207,7 +204,7 @@ async function run(win) {
     const before = loads;
     wake();
     await waitFor(view => loads > before && !view.checking && view.nextAt !== null, `unchanged scan ${round + 1}`);
-    assert.equal(pushed.length, 3);
+    assert.equal(pushed.length, 2);
     await waitFor(() => BrowserWindow.getAllWindows().length === 1, 'the scanner window is closed after every round');
   }
   cases++;
@@ -218,7 +215,7 @@ async function run(win) {
   const mismatched = await waitFor(view => loads > beforeRedirect && !view.checking && view.nextAt !== null, 'scan with changing venue URL');
   assert.equal(mismatched.slotCount, 0, 'a different venue URL invalidates an otherwise readable timetable');
   assert.match(mismatched.venues[0].error, /跳转异常/);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 2);
   changeVenueWhileReading = false;
   cases++;
 
@@ -233,7 +230,7 @@ async function run(win) {
   await reloaded;
   await waitFor(view => loads > beforeRecovery && view.running && !view.checking && view.slotCount === 3, 'reopen a crashed interface while monitoring continues');
   assert.equal(win.isVisible(), true);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 2);
   cases++;
 
   await click('#open-booking');
@@ -247,7 +244,7 @@ async function run(win) {
   assert.equal(last.running, false);
   assert.equal(last.slotCount, 0);
   assert.equal(last.nextAt, null);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 2);
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal((await state()).auth, 'expired', 'an already open booking page cannot revive an expired login');
   await click('#account-action');
@@ -266,7 +263,7 @@ async function run(win) {
   await click('#monitor-action');
   const xueyuanlu = await waitFor(view => view.running && !view.checking && view.slotCount === 6, 'both Xueyuanlu venues scanned');
   assert.deepEqual(xueyuanlu.rows.map(row => row.venue), ['38', '39']);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 2);
   await click('#monitor-action');
   await waitFor(view => !view.running && view.nextAt === null, 'manual pause cancels scheduling');
   cases++;
@@ -280,7 +277,7 @@ async function run(win) {
   await click('#remove-connection');
   await waitFor(view => !view.delivery.configured && view.pushService === null, 'disconnect notification provider');
   assert.equal(storedCiphertext(), null);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 2);
   cases++;
 
   clearTimeout(deadline);

@@ -3,6 +3,8 @@
 const CAMPUS_ORIGIN = 'https://cgyy.buaa.edu.cn';
 const LOGIN_URL = `${CAMPUS_ORIGIN}/venue/login`;
 const BEIJING = 'Asia/Shanghai';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BOOKING_RELEASE_OFFSET = 7 * 60 * 60 * 1000;
 const MIN_INTERVAL = 1;
 const MAX_INTERVAL = 1440;
 const VENUES = Object.freeze({
@@ -35,10 +37,20 @@ function beijingClock(at) {
   return clockFormat.format(at);
 }
 
+function beijingMidnight(at) {
+  return Date.parse(`${beijingDay(at)}T00:00:00+08:00`);
+}
+
+function nextBookingRelease(at) {
+  const release = beijingMidnight(at) + BOOKING_RELEASE_OFFSET;
+  return release > at ? release : release + DAY_MS;
+}
+
 function calendarDates(at) {
-  const today = Date.parse(`${beijingDay(at)}T00:00:00+08:00`);
-  return new Map(Array.from({ length: 10 }, (_, offset) => {
-    const date = beijingDay(today + offset * 86400000);
+  const today = beijingMidnight(at);
+  const length = at < today + BOOKING_RELEASE_OFFSET ? 2 : 3;
+  return new Map(Array.from({ length }, (_, offset) => {
+    const date = beijingDay(today + offset * DAY_MS);
     const [, month, day] = date.split('-');
     return [`${Number(month)}月${Number(day)}日`, date];
   }));
@@ -76,7 +88,7 @@ function validatedCourt({ court, start, end }) {
 
 function validatedSnapshot(id, days, started) {
   const knownDays = calendarDates(started);
-  if (!Array.isArray(days) || !days.length || days.length > 7) throw new Error('官网返回的日期范围异常。');
+  if (!Array.isArray(days) || !days.length || days.length > knownDays.size) throw new Error('官网返回的日期范围异常。');
   const slots = new Map();
   const reserved = new Map();
   const dates = new Set();
@@ -119,5 +131,5 @@ function groupSlots(slots) {
 
 module.exports = {
   CAMPUS_ORIGIN, LOGIN_URL, BEIJING, CAMPUSES, VENUES, MIN_INTERVAL, MAX_INTERVAL,
-  venueUrl, beijingDay, beijingClock, validOptions, parseToken, calendarDates, startsAt, slotKey, validatedSnapshot, groupSlots,
+  venueUrl, beijingDay, beijingClock, validOptions, parseToken, calendarDates, nextBookingRelease, startsAt, slotKey, validatedSnapshot, groupSlots,
 };

@@ -139,6 +139,7 @@ async function execute(win, action, argument) {
 
 async function readVenue(id, signal) {
   signal.throwIfAborted();
+  const started = Date.now();
   const target = venueUrl(id);
   const win = new BrowserWindow({
     show: false, skipTaskbar: true, width: 1270, height: 920,
@@ -157,8 +158,9 @@ async function readVenue(id, signal) {
     await win.loadURL(target);
     signal.throwIfAborted();
     verifyDestination();
-    const started = Date.now();
-    const result = await execute(win, readBookingPage, { todayLabel: calendarDates(started).keys().next().value, nowClock: beijingClock(started) });
+    const result = await execute(win, readBookingPage, {
+      bookableLabels: [...calendarDates(started).keys()], nowClock: beijingClock(started),
+    });
     signal.throwIfAborted();
     verifyDestination();
     if (result?.error === 'colors') throw new UserError('官网格子的颜色和预约状态不一致，本轮无法确认该馆余量。');
