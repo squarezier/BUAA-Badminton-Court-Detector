@@ -6,7 +6,7 @@ const { mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { productName, version } = require('../package.json');
 const {
-  CAMPUS_ORIGIN, LOGIN_URL, VENUES, venueUrl, validOptions,
+  CAMPUS_ORIGIN, LOGIN_URL, VENUES, venueUrl, validOptions, validTarget, targetFields,
   calendarDates, beijingClock, validatedSnapshot,
 } = require('./courts.cjs');
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
@@ -317,6 +317,13 @@ function handle(action, run) {
   });
 }
 
+async function saveMonitorOptions(options) {
+  if (editing) throw new UserError('上一个设置正在保存，请稍候。');
+  editing = true;
+  try { await prefs.saveOptions(options); monitor.setOptions(options); }
+  finally { editing = false; }
+}
+
 function setupIpc() {
   handle('state', () => viewState(monitor.state()));
   handle('login', () => openCampus(LOGIN_URL, true));
@@ -337,12 +344,21 @@ function setupIpc() {
   handle('pause', () => monitor.stop());
   handle('options', async options => {
     if (!validOptions(options)) throw new UserError('请选择有效的校区和检查频率。');
-    if (editing) throw new UserError('上一个设置正在保存，请稍候。');
     if (monitor.running && options.campus !== monitor.options.campus) throw new UserError('请先暂停监控再切换校区。');
-    const clean = { campus: options.campus, interval: options.interval };
-    editing = true;
-    try { await prefs.saveOptions(clean); monitor.setOptions(clean); }
-    finally { editing = false; }
+    await saveMonitorOptions({ ...monitor.options, campus: options.campus, interval: options.interval });
+  });
+  handle('target', async value => {
+    const { campus, target } = value ?? {};
+    if (campus !== monitor.options.campus) throw new UserError('校区已变更，请重新选择目标。');
+    const targets = { ...monitor.options.targets };
+    if (target === null) {
+      delete targets[campus];
+    } else {
+      if (!validTarget(target, campus)) throw new UserError('请检查目标日期、起止时间、场馆和场号。');
+      if (Date.parse(`${target.date}T${target.end}:00+08:00`) <= Date.now()) throw new UserError('请选择尚未结束的北京时间段。');
+      targets[campus] = targetFields(target);
+    }
+    await saveMonitorOptions({ ...monitor.options, targets });
   });
   handle('push-connect', value => {
     const connection = feishuConnection(value);
@@ -377,7 +393,7 @@ async function initialize() {
 
   mainWindow = new BrowserWindow({
     width: 1130, height: 820, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
-    show: false, backgroundColor: '#f3f7fc', autoHideMenuBar: true,
+    show: false, backgroundColor: '#f8f9fb', autoHideMenuBar: true,
     webPreferences: { ...webPreferences, session: uiSession, preload: path.join(__dirname, 'preload.cjs') },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

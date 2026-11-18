@@ -16,13 +16,13 @@
       </div>
       <nav aria-label="应用页面" class="navigation">
         <button type="button" class="nav current" data-page="monitor" aria-current="page"><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
+        <button type="button" class="nav" data-page="target"><span class="nav-icon target-icon" aria-hidden="true"></span>提醒目标</button>
         <button type="button" class="nav" data-page="feishu"><span class="nav-icon chat-icon" aria-hidden="true"></span>飞书通知</button>
       </nav>
       <section class="account" aria-labelledby="account-title">
         <h2 id="account-title">北航账号</h2>
         <p class="account-state"><i id="account-dot" class="dot"></i><span id="account-state">尚未登录</span></p>
         <button id="account-action" class="button account-button" type="button">登录北航</button>
-        <p class="account-note">通过学校统一身份认证登录</p>
       </section>
     </aside>
 
@@ -31,13 +31,14 @@
         <header class="page-head">
           <div>
             <h1 id="monitor-title">场地监控</h1>
-            <p>数据来自北航智慧场馆</p>
+            <p>北航智慧场馆 · 羽毛球</p>
           </div>
           <button class="button primary" id="monitor-action" type="button" disabled><span class="play-icon" aria-hidden="true"></span><span id="monitor-action-label">开始监控</span></button>
         </header>
 
         <section class="card monitor-summary" aria-labelledby="selected-campus">
           <header class="monitor-band">
+            <div class="court-drawing" aria-hidden="true"><i></i><b></b></div>
             <div class="band-title">
               <h2 id="selected-campus">沙河校区</h2>
               <p id="selected-venues">综合馆 · 每 2 分钟检查</p>
@@ -71,6 +72,13 @@
             </div>
           </section>
 
+          <aside class="inspector">
+          <section class="card target-shortcut" aria-labelledby="shortcut-title">
+            <div class="card-head"><h2 id="shortcut-title"><span class="target-icon" aria-hidden="true"></span>提醒目标</h2></div>
+            <div class="shortcut-body"><strong id="shortcut-range">全部退订</strong><p id="shortcut-place"></p>
+              <button class="quiet" type="button" id="open-target"><span id="target-link-label">设置目标</span> <span aria-hidden="true">›</span></button>
+            </div>
+          </section>
           <section class="card settings" aria-labelledby="settings-title">
             <div class="card-head"><h2 id="settings-title">监控设置</h2></div>
             <div class="settings-body">
@@ -90,10 +98,41 @@
               <div class="interval-control">
                 <form id="interval-form">
                   <label for="interval">检查频率</label>
-                  <div class="interval-entry"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required aria-describedby="options-note"><button class="button interval-save" type="submit" id="save-interval">保存</button></div>
+                  <div class="interval-entry"><div class="unit-field"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required aria-describedby="options-note"><span>分钟</span></div><button class="button interval-save" type="submit" id="save-interval">保存</button></div>
                 </form>
-                <p id="options-note">每 1–1440 分钟检查一次。每天 07:00 刷新预约日期。</p>
+                <p id="options-note">可设 1–1440 分钟，07:00 自动补查放号。</p>
               </div>
+            </div>
+          </section>
+          </aside>
+        </div>
+      </section>
+
+      <section id="page-target" aria-labelledby="target-title" hidden>
+        <header class="page-head"><div><h1 id="target-title">提醒目标</h1><p id="target-campus"></p></div></header>
+        <div class="target-grid">
+          <section class="card target-editor" aria-labelledby="editor-title">
+            <div class="card-head"><h2 id="editor-title">选择想打的场次</h2></div>
+            <form id="target-form">
+              <div class="form-row"><label for="target-date">预约日期</label><input id="target-date" type="date" required></div>
+              <div class="form-row"><label for="target-start">目标时段</label>
+                <div class="range-fields"><input id="target-start" type="time" aria-label="开始时间" required><span>至</span><input id="target-end" type="time" aria-label="结束时间" required></div>
+              </div>
+              <p class="field-note">按北京时间匹配，场次的开始和结束都要在范围内。</p>
+              <div class="form-row"><label for="target-venue">场馆</label><select id="target-venue"></select></div>
+              <div class="form-row"><label for="target-court">场号</label><input id="target-court" type="number" min="1" max="120" step="1" inputmode="numeric" placeholder="不限场号" aria-describedby="court-note"></div>
+              <p class="field-note" id="court-note">留空可接收所选场馆内任意场号的退订。</p>
+              <p class="form-error" id="target-error" role="alert" hidden></p>
+              <div class="target-actions"><button type="submit" class="button primary" id="save-target">保存目标</button></div>
+            </form>
+          </section>
+          <section class="card target-summary" aria-labelledby="saved-title">
+            <div class="card-head"><h2 id="saved-title">当前提醒范围</h2></div>
+            <div class="target-summary-body">
+              <div class="summary-symbol target-icon" aria-hidden="true"></div>
+              <strong id="saved-range"></strong><p id="saved-place"></p>
+              <p class="target-note" id="saved-note"></p>
+              <button class="quiet" type="button" id="clear-target" hidden>移除目标，恢复全部退订</button>
             </div>
           </section>
         </div>

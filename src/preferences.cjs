@@ -3,14 +3,14 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
-const { validOptions } = require('./courts.cjs');
+const { CAMPUSES, validOptions, validTarget, targetFields } = require('./courts.cjs');
 const { decodePushConnection, encodePushConnection } = require('./push-connection.cjs');
 
 class Preferences {
   constructor(file, storage) {
     this.file = file;
     this.storage = storage;
-    this.options = { campus: 'shahe', interval: 2 };
+    this.options = { campus: 'shahe', interval: 2, targets: {} };
     this.connection = null;
     this.encrypted = null;
     this.warning = '';
@@ -27,7 +27,17 @@ class Preferences {
       if (error.code !== 'ENOENT') this.warning = '本地设置无法读取，已恢复默认设置。';
       return;
     }
-    if (validOptions(data?.options)) this.options = { campus: data.options.campus, interval: data.options.interval };
+    if (validOptions(data?.options)) {
+      const { campus, interval, targets } = data.options;
+      this.options = { campus, interval, targets: {} };
+      if (targets !== undefined) {
+        const readable = targets !== null && typeof targets === 'object' && !Array.isArray(targets);
+        for (const id of Object.keys(CAMPUSES)) {
+          if (readable && !Object.hasOwn(targets, id)) continue;
+          this.options.targets[id] = readable && validTarget(targets[id], id) ? targetFields(targets[id]) : null;
+        }
+      }
+    }
     if (typeof data?.encryptedToken !== 'string' || !/^[A-Za-z0-9+/=]{8,4096}$/.test(data.encryptedToken)) return;
     this.encrypted = data.encryptedToken;
     let plain;

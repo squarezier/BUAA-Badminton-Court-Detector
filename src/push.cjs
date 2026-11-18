@@ -66,7 +66,7 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
 
-function notice(campus, slots, at) {
+function notice(campus, slots, at, targeted = false) {
   const site = CAMPUSES[campus];
   const groups = groupSlots(slots);
   const details = groups.slice(0, 18).map(group => {
@@ -81,7 +81,8 @@ function notice(campus, slots, at) {
   const feishuLinks = venues.map(id => `[${VENUES[id].label} ↗](${venueUrl(id)})`);
   const statusChange = '官网状态从已预约变为绿色可约。';
   const footer = '余量随时变化，请以预约页为准。';
-  const title = `${productName}｜${site.label}疑似退订 ${slots.length} 场次`;
+  const title = targeted ? `${productName}｜目标场次重新可约 · ${site.label} ${slots.length} 场次` :
+    `${productName}｜${site.label}疑似退订 ${slots.length} 场次`;
   const elements = [markdownBlock(statusChange), ...feishuAvailability(groups, feishuLinks)];
   return {
     title,

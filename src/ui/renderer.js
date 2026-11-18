@@ -4,7 +4,8 @@ const app = window.courtWatch;
 const get = id => document.getElementById(id);
 const text = (id, value) => { if (get(id).textContent !== value) get(id).textContent = value; };
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-const dateLabel = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', weekday: 'short' });
+const weekday = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'short' });
+const isoDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 });
 const campusNames = { shahe: '沙河校区', xueyuanlu: '学院路校区' };
 let current;
@@ -14,6 +15,7 @@ let renderedRows = '';
 let expiryTimer;
 let intervalDirty = false;
 let pushError = '';
+let editorVersion;
 
 function showToast(message) {
   const toast = get('toast');
@@ -51,6 +53,82 @@ function showPage(page) {
     else nav.removeAttribute('aria-current');
     get(`page-${nav.dataset.page}`).hidden = !selected;
   }
+  const title = get(`page-${page}`).querySelector('h1');
+  title.tabIndex = -1;
+  title.focus({ preventScroll: true });
+  window.scrollTo(0, 0);
+}
+
+function shortDay(value) {
+  const [, month, day] = value.split('-');
+  return `${Number(month)}月${Number(day)}日 ${weekday.format(new Date(`${value}T12:00:00+08:00`))}`;
+}
+
+function renderTarget(options, venues, now) {
+  const target = options.targets?.[options.campus];
+  const version = JSON.stringify([options.campus, target === undefined ? 'all' : target]);
+  const endsAt = target ? Date.parse(`${target.date}T${target.end}:00+08:00`) : 0;
+  const expired = Boolean(target && endsAt <= now);
+  const campus = campusNames[options.campus];
+  let range = '全部退订';
+  let place = '此校区的所有时段和场号';
+  let note = '可以提前设定未来的日期。保存后，只有符合目标的场次重新可约时才会提醒。';
+  if (target) {
+    const venue = venues.find(item => item.id === target.venue)?.label ?? '全部场馆';
+    const year = target.date.slice(0, 4);
+    const yearLabel = year === isoDay.format(now).slice(0, 4) ? '' : `${year}年`;
+    range = `${yearLabel}${shortDay(target.date)}${expired ? ' · 已结束' : ''}`;
+    place = `${target.start}–${target.end}\n${venue} · ${target.court === null ? '不限场号' : `${target.court} 号场`}`;
+    note = expired ? '此目标已到期，提醒已静默。可以选择新的日期或移除目标。' : '目标仅用于退订推送，场地监控仍显示全校区的绿色空场。';
+  } else if (target === null) {
+    range = '目标需要重新设置';
+    place = '此校区的推送已静默';
+    note = '已保存的目标无法读取。可以重新保存，或移除目标以接收全部退订。';
+  }
+  text('target-campus', `${campus} · 退订时通知`);
+  text('saved-range', range);
+  text('shortcut-range', range);
+  text('saved-place', place);
+  text('shortcut-place', place);
+  text('saved-note', note);
+  text('target-link-label', target === undefined ? '设置目标' : '编辑目标');
+  get('clear-target').hidden = target === undefined;
+  get('target-date').min = isoDay.format(now);
+  if (editorVersion !== version) {
+    editorVersion = version;
+    get('target-date').value = target?.date ?? isoDay.format(now + 86400000);
+    get('target-start').value = target?.start ?? '18:00';
+    get('target-end').value = target?.end ?? '20:00';
+    get('target-venue').replaceChildren(new Option('全部场馆', ''), ...venues.map(venue => new Option(venue.label, venue.id)));
+    get('target-venue').value = target?.venue ?? '';
+    get('target-court').value = target?.court ?? '';
+    get('target-error').hidden = true;
+  }
+  for (const control of get('target-form').elements) control.disabled = busy;
+  get('clear-target').disabled = busy;
+  return endsAt > now ? endsAt : Infinity;
+}
+
+function submitTarget(event) {
+  event.preventDefault();
+  if (!current) return;
+  const date = get('target-date').value;
+  const start = get('target-start').value;
+  const end = get('target-end').value;
+  const court = get('target-court');
+  const error = get('target-error');
+  const showError = message => { error.textContent = message; error.hidden = false; };
+  if (start >= end) { showError('结束时间需要晚于开始时间。'); get('target-end').focus(); return; }
+  if (Date.parse(`${date}T${end}:00+08:00`) <= Date.now()) { showError('请选择尚未结束的北京时间段。'); return; }
+  const campus = current.options.campus;
+  const target = { date, start, end, venue: get('target-venue').value || null, court: court.value === '' ? null : court.valueAsNumber };
+  void act(async () => {
+    try {
+      await app.saveTarget(campus, target);
+      error.hidden = true;
+      showToast('目标已保存，符合条件的退订会推送到已连接的渠道。');
+    } catch (err) { showError(err.message || '目标保存失败，请重试。'); }
+  });
 }
 
 function appendCell(row, value) {
@@ -67,8 +145,7 @@ function renderTable(rows, venues) {
   body.replaceChildren();
   for (const slot of rows) {
     const row = body.insertRow();
-    const date = dateLabel.format(new Date(`${slot.date}T12:00:00+08:00`));
-    appendCell(row, date.replace(/\s*(星期|周)/u, ' $1'));
+    appendCell(row, shortDay(slot.date));
     appendCell(row, `${slot.start}–${slot.end}`);
     const venue = venues.find(item => item.id === slot.venue);
     const link = document.createElement('button');
@@ -90,14 +167,14 @@ function render() {
   const { auth, options, venues, running, checking, suspended, lastAt, nextAt, rows: sampledRows, delivery } = current;
   clearTimeout(expiryTimer);
   const now = Date.now();
-  let nextExpiry = Infinity;
+  let nextExpiry = renderTarget(options, venues, now);
   const rows = sampledRows.filter(row => {
     const starts = Date.parse(`${row.date}T${row.start}:00+08:00`);
     if (starts <= now) return false;
     nextExpiry = Math.min(nextExpiry, starts);
     return true;
   });
-  if (Number.isFinite(nextExpiry)) expiryTimer = setTimeout(render, nextExpiry - now + 10);
+  if (Number.isFinite(nextExpiry)) expiryTimer = setTimeout(render, Math.min(2147483647, nextExpiry - now + 10));
   const slotCount = rows.reduce((total, row) => total + row.courts.length, 0);
   const signedIn = auth === 'signed-in';
   const errors = venues.filter(venue => venue.error);
@@ -202,6 +279,13 @@ if (!app) {
   get('account-action').addEventListener('click', () => act(() => current?.auth === 'signed-in' ? app.logOut() : app.login()));
   get('monitor-action').addEventListener('click', () => act(() => current?.running ? app.pause() : app.start()));
   get('open-booking').addEventListener('click', () => act(() => app.openVenue(current.venues[0].id)));
+  get('open-target').addEventListener('click', () => showPage('target'));
+  get('target-form').addEventListener('input', () => { get('target-error').hidden = true; });
+  get('target-form').addEventListener('submit', submitTarget);
+  get('clear-target').addEventListener('click', () => act(async () => {
+    await app.saveTarget(current.options.campus, null);
+    showToast('已恢复此校区的全部退订提醒。');
+  }));
   get('interval').addEventListener('input', () => { intervalDirty = true; });
   get('interval-form').addEventListener('submit', event => {
     event.preventDefault();

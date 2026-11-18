@@ -264,8 +264,65 @@ async function run(win) {
   const xueyuanlu = await waitFor(view => view.running && !view.checking && view.slotCount === 6, 'both Xueyuanlu venues scanned');
   assert.deepEqual(xueyuanlu.rows.map(row => row.venue), ['38', '39']);
   assert.equal(pushed.length, 2);
+  await click('#open-target');
+  assert.equal(await js("document.querySelector('#page-target').hidden"), false);
+  const targetDay = [...calendarDates(Date.now()).values()][1];
+  await js(`
+    document.querySelector('#target-date').value = ${JSON.stringify(targetDay)};
+    document.querySelector('#target-start').value = '08:00';
+    document.querySelector('#target-end').value = '07:00';
+    document.querySelector('#target-form').requestSubmit();
+  `);
+  assert.match(await js("document.querySelector('#target-error').innerText"), /晚于开始/);
+  assert.deepEqual((await state()).options.targets, {});
+  await js(`document.querySelector('#target-start').value = '07:00';
+    document.querySelector('#target-end').value = '08:00';
+    document.querySelector('#target-venue').value = '39';
+    document.querySelector('#target-court').value = '3'`);
+  const draftScan = loads;
+  wake();
+  await waitFor(view => loads > draftScan && !view.checking && view.nextAt !== null, 'unsubmitted target survives a background scan');
+  assert.equal(await js("document.querySelector('#target-court').value"), '3');
+  await js("document.querySelector('#target-form').requestSubmit()");
+  const targeted = await waitFor(view => view.options.targets?.xueyuanlu?.court === 3, 'target saved through the form');
+  assert.deepEqual(targeted.options.targets.xueyuanlu, { date: targetDay, start: '07:00', end: '08:00', venue: '39', court: 3 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')).options.targets, targeted.options.targets);
+  assert.equal(storedCiphertext(), feishuCiphertext.toString('base64'));
+  assert.equal(pushed.length, 2);
+  cases++;
+
+  visibleCourts = [1, 2, 3, 4];
+  wake();
+  await waitFor(view => view.slotCount === 8 && !view.checking && pushed.length === 3, 'two venues reopen but only matching court reaches Feishu');
+  assert.match(pushed[2].title, /目标场次重新可约.*学院路校区 1 场次/);
+  assert.match(pushed[2].content, /07:00–08:00.*体育馆训练馆[\s\S]*场号 \*\*3 号\*\*/);
+  assert.doesNotMatch(pushed[2].content, /体育馆主馆|venue-reservation\/38/);
+  for (const [campus, target] of [
+    ['shahe', targeted.options.targets.xueyuanlu],
+    ['xueyuanlu', { ...targeted.options.targets.xueyuanlu, date: '2000-01-01' }],
+    ['xueyuanlu', { ...targeted.options.targets.xueyuanlu, venue: '57' }],
+  ]) {
+    await assert.rejects(js(`window.courtWatch.saveTarget(${JSON.stringify(campus)}, ${JSON.stringify(target)})`));
+  }
+  assert.deepEqual((await state()).options.targets, targeted.options.targets);
+  cases++;
+  await click('[data-page=monitor]');
   await click('#monitor-action');
   await waitFor(view => !view.running && view.nextAt === null, 'manual pause cancels scheduling');
+  cases++;
+
+  await click('input[name="campus"][value="shahe"]');
+  await waitFor(view => view.options.campus === 'shahe', 'Shahe retains all alerts');
+  assert.equal(await js("document.querySelector('#shortcut-range').textContent"), '全部退订');
+  await click('input[name="campus"][value="xueyuanlu"]');
+  await waitFor(view => view.options.campus === 'xueyuanlu', 'target restored for the other campus');
+  await click('#open-target');
+  assert.equal(await js("document.querySelector('#target-court').value"), '3');
+  await click('#clear-target');
+  await waitFor(view => !Object.hasOwn(view.options.targets, 'xueyuanlu'), 'clearing the target restores all reopenings without sending');
+  assert.equal(await js("document.querySelector('#saved-range').textContent"), '全部退订');
+  assert.equal(pushed.length, 3);
+  await click('[data-page=monitor]');
   cases++;
 
   await click('#account-action');
@@ -277,7 +334,7 @@ async function run(win) {
   await click('#remove-connection');
   await waitFor(view => !view.delivery.configured && view.pushService === null, 'disconnect notification provider');
   assert.equal(storedCiphertext(), null);
-  assert.equal(pushed.length, 2);
+  assert.equal(pushed.length, 3);
   cases++;
 
   clearTimeout(deadline);

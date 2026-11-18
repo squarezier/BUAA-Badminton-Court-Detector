@@ -164,7 +164,9 @@ async function run() {
   page.destroy();
 
   const state = {
-    options: { campus: 'shahe', interval: 2 }, auth: 'signed-in', running: true, checking: false,
+    options: { campus: 'shahe', interval: 2, targets: { shahe: {
+      date: '2026-11-20', start: '12:00', end: '16:00', venue: '57', court: 7,
+    } } }, auth: 'signed-in', running: true, checking: false,
     suspended: false, nextAt: Date.parse('2026-11-18T14:10:00+08:00'), lastAt: Date.parse('2026-11-18T14:08:00+08:00'), slotCount: 9,
     rows: [
       { date: '2026-11-18', start: '17:00', end: '18:00', venue: '57', courts: [3, 5], price: 25 },
@@ -205,13 +207,21 @@ async function run() {
   assert.equal(await window.webContents.executeJavaScript("document.title"), '候羽');
   const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
   assert.equal(logoWidth, 512);
-  const sideBySide = () => window.webContents.executeJavaScript(`
-    document.querySelector('.settings').getBoundingClientRect().left >
-      document.querySelector('.schedule').getBoundingClientRect().left
-  `);
-  assert.equal(await sideBySide(), true, 'Monitoring settings sit beside the results at the default width');
+  assert.equal(await window.webContents.executeJavaScript(`
+    document.querySelector('.inspector').getBoundingClientRect().left >= document.querySelector('.schedule').getBoundingClientRect().right
+  `), true, 'Monitoring controls sit beside the results at the default width');
+  assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('input[name=campus]:disabled')).opacity"), '0',
+    'a disabled native radio does not cover the selected campus label');
   await paint();
   await fs.writeFile(path.join(target, 'monitor.png'), (await window.webContents.capturePage()).toPNG());
+  await window.webContents.executeJavaScript("document.querySelector('#open-target').click()");
+  await paint();
+  assert.deepEqual(await window.webContents.executeJavaScript(`[
+    document.querySelector('#page-target').hidden, document.querySelector('#target-date').value,
+    document.querySelector('#target-start').value, document.querySelector('#target-end').value,
+    document.querySelector('#target-venue').value, document.querySelector('#target-court').value,
+  ]`), [false, '2026-11-20', '12:00', '16:00', '57', '7']);
+  await fs.writeFile(path.join(target, 'target.png'), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
   assert.equal(await window.webContents.executeJavaScript("document.querySelector('#page-feishu').hidden"), false);
@@ -220,10 +230,18 @@ async function run() {
   await paint();
   const viewportFit = () => window.webContents.executeJavaScript('innerWidth <= 760 && document.documentElement.scrollWidth <= innerWidth');
   assert.equal(await viewportFit(), true, 'Feishu page fits the minimum width');
+  await window.webContents.executeJavaScript("document.querySelector('[data-page=target]').click()");
+  await paint();
+  assert.equal(await viewportFit(), true, 'Target editor fits the minimum width');
+  assert.equal(await window.webContents.executeJavaScript(`[...document.querySelectorAll('#target-form input, #target-form select')].every(el => {
+    const rect = el.getBoundingClientRect(); return rect.width >= 82 && rect.left >= 0 && rect.right <= innerWidth;
+  })`), true, 'native date, time and court inputs have usable widths');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');
-  assert.equal(await sideBySide(), false, 'Monitoring settings move below the results at the minimum width');
+  assert.equal(await window.webContents.executeJavaScript(`
+    document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom
+  `), true, 'Monitoring controls move below the results at the minimum width');
   const expiredSlotRemoved = await window.webContents.executeJavaScript(`new Promise(resolve => {
     const baseline = performance.now();
     Date.now = () => Date.parse('2026-11-18T16:59:59.800+08:00') + performance.now() - baseline;

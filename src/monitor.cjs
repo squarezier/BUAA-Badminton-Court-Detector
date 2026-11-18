@@ -1,6 +1,6 @@
 'use strict';
 
-const { CAMPUSES, VENUES, groupSlots, nextBookingRelease, slotKey, startsAt } = require('./courts.cjs');
+const { CAMPUSES, VENUES, groupSlots, matchesTarget, nextBookingRelease, slotKey, startsAt } = require('./courts.cjs');
 const { notice } = require('./push.cjs');
 
 class UserError extends Error {
@@ -29,6 +29,7 @@ class CourtMonitor {
     this.snapshots = new Map();
     this.previousReservations = new Map();
     this.pending = new Map();
+    this.inFlightSlots = new Map();
     this.pushNotBefore = 0;
     this.delivery = { configured: false, persistent: false, status: 'off', text: '', at: null };
   }
@@ -51,6 +52,8 @@ class CourtMonitor {
 
   emit() { this.onChange(this.state()); }
 
+  get target() { return this.options.targets?.[this.options.campus]; }
+
   setOptions(options) {
     const campusChanged = options.campus !== this.options.campus;
     if (this.running && campusChanged) throw new UserError('请先暂停监控再切换校区。');
@@ -61,6 +64,9 @@ class CourtMonitor {
       this.lastAt = null;
     }
     this.options = options;
+    for (const queue of [this.pending, this.inFlightSlots]) {
+      for (const [key, slot] of queue) if (!matchesTarget(slot, this.target)) queue.delete(key);
+    }
     if (this.running && intervalChanged && this.nextAt > this.now()) {
       const updated = this.nextRegularAt - previousDelay + this.pollDelay();
       this.schedule(Math.max(0, updated - this.now()));
@@ -160,7 +166,7 @@ class CourtMonitor {
         if (item.venue === id && !available.has(key)) this.pending.delete(key);
       }
       for (const [key, slot] of available) {
-        if (prior.has(key) || this.pending.has(key)) this.pending.set(key, slot);
+        if ((prior.has(key) || this.pending.has(key)) && matchesTarget(slot, this.target)) this.pending.set(key, slot);
       }
     }
     this.previousReservations.set(id, new Set((sample.reserved ?? []).map(slotKey)));
@@ -171,23 +177,27 @@ class CourtMonitor {
     const now = this.now();
     const batch = [];
     for (const [key, slot] of pending) {
-      if (startsAt(slot) <= now) pending.delete(key);
+      if (startsAt(slot) <= now || !matchesTarget(slot, this.target)) pending.delete(key);
       else if (!failedVenues.has(slot.venue)) batch.push(slot);
     }
     if (!batch.length || signal.aborted || !this.delivery.configured ||
         this.delivery.status === 'blocked' || now < this.pushNotBefore) return;
     // After dispatch, an interrupted request may already have been accepted.
     for (const slot of batch) pending.delete(slotKey(slot));
+    const eligible = new Map(batch.map(slot => [slotKey(slot), slot]));
+    this.inFlightSlots = eligible;
     let result;
     try {
-      result = await this.dispatch(notice(this.options.campus, batch, now), signal);
+      result = await this.dispatch(notice(this.options.campus, batch, now, Boolean(this.target)), signal);
     } catch {
       result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
+    } finally {
+      this.inFlightSlots = new Map();
     }
     // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
     if (this.pending !== pending) return;
     if (result.kind === 'retry' || result.kind === 'blocked') {
-      for (const slot of batch) pending.set(slotKey(slot), slot);
+      for (const [key, slot] of eligible) if (startsAt(slot) > this.now()) pending.set(key, slot);
     }
     this.recordDelivery(result);
   }
