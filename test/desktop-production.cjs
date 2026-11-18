@@ -4,13 +4,20 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
+const { app, BrowserWindow, clipboard, powerMonitor, safeStorage, session } = require('electron');
 const { calendarDates } = require('../src/courts.cjs');
 
 const profile = path.resolve(process.argv.at(-1));
 const syntheticToken = 'test-houyu-local-token-01';
+const rejectedToken = 'test-houyu-local-token-02';
 const campusOrigin = 'https://cgyy.buaa.edu.cn';
 const label = [...calendarDates(Date.now()).keys()][1];
+const wallClock = Date.now;
+let testClockOffset = 0;
+Date.now = () => wallClock() + testClockOffset;
+let clipboardContent = 'A note, not a token.';
+let clipboardReads = 0;
+let rejectedTests = 0;
 let visibleCourts = [1];
 let expired = false;
 let pushed = [];
@@ -23,13 +30,22 @@ fs.mkdirSync(profile, { recursive: true });
 const settings = path.join(profile, 'settings.json');
 fs.writeFileSync(settings, JSON.stringify({ version: 1, options: { campus: 'shahe', interval: 2 }, encryptedToken: null }), { mode: 0o600 });
 safeStorage.isAsyncEncryptionAvailable = async () => false;
+clipboard.readText = async () => {
+  clipboardReads++;
+  return clipboardContent;
+};
 
 global.fetch = async (url, request) => {
   assert.equal(url, 'https://www.pushplus.plus/send');
   assert.equal(request.method, 'POST');
   const { token, title, content, channel } = JSON.parse(request.body);
-  assert.equal(token, syntheticToken);
   assert.equal(channel, 'wechat');
+  if (token === rejectedToken) {
+    assert.match(title, /测试提醒/);
+    rejectedTests++;
+    return Response.json({ code: 903 });
+  }
+  assert.equal(token, syntheticToken);
   pushed.push({ title, content });
   return Response.json({ code: 200 });
 };
@@ -70,7 +86,7 @@ async function run(win) {
   async function waitFor(passes, description) {
     for (let tries = 0; tries < 150; tries++) {
       const current = await state();
-      if (passes(current)) return current;
+      if (await passes(current)) return current;
       await new Promise(resolve => setTimeout(resolve, 35));
     }
     throw new Error(`Timed out: ${description}`);
@@ -84,12 +100,31 @@ async function run(win) {
   cases++;
 
   await click('[data-page=wechat]');
-  await js(`document.querySelector('#push-token').value = ${JSON.stringify(syntheticToken)}; document.querySelector('#token-form').requestSubmit()`);
-  await waitFor(view => view.delivery.configured, 'token storage');
+  const feedback = () => js("document.querySelector('#push-feedback').textContent");
+  assert.equal(clipboardReads, 0, 'entering the WeChat page does not read the clipboard');
+  await click('#push-connect');
+  const missing = await waitFor(async () => (await feedback()).includes('一键复制'), 'clipboard validation');
+  assert.equal(missing.delivery.configured, false);
+  assert.equal(pushed.length, 0);
+  assert.equal(clipboardReads, 1);
+  clipboardContent = syntheticToken;
+  await click('#push-connect');
+  const connected = await waitFor(view => view.delivery.status === 'accepted', 'clipboard connection and test');
+  assert.equal(connected.delivery.configured, true);
+  assert.equal(clipboardReads, 2);
   assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), new RegExp(syntheticToken));
-  await click('#push-test');
-  await waitFor(view => view.delivery.status === 'accepted', 'test push');
   assert.match(pushed[0].title, /测试提醒/);
+  assert.equal(pushed.length, 1);
+  cases++;
+
+  testClockOffset += 16000;
+  clipboardContent = rejectedToken;
+  await click('#push-connect');
+  const retained = await waitFor(async () => (await feedback()).includes('令牌无效'), 'invalid replacement');
+  assert.equal(rejectedTests, 1);
+  assert.equal(retained.delivery.configured, true);
+  assert.equal(retained.delivery.status, 'accepted');
+  assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), new RegExp(rejectedToken));
   cases++;
 
   await click('[data-page=monitor]');

@@ -80,6 +80,7 @@ async function sendPush(token, message, signal, fetchRequest = fetch) {
     const code = typeof value === 'string' && /^\d{3}$/.test(value) ? Number(value) : value;
     if (code === 200) return { kind: 'accepted', text: 'PushPlus 已受理，请在微信确认接收。' };
     if (code === 500) return { kind: 'retry', retryAfterMs: PUSH_RETRY_DEFAULT, text: 'PushPlus 暂时异常，将在后续检查中重试。' };
+    if (code === 903) return { kind: 'blocked', text: 'PushPlus 令牌无效，请在官网重新复制。' };
     if (code === 905) return { kind: 'blocked', text: 'PushPlus 要求先完成实名认证。' };
     if (code === 900) return { kind: 'blocked', text: 'PushPlus 限制发送，请检查配额或账号状态。' };
     if (!Number.isInteger(code) || code < 100 || code > 999) return { kind: 'unknown', text: 'PushPlus 返回异常，送达状态待确认。' };

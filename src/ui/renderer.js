@@ -13,6 +13,7 @@ let toastTimer;
 let renderedRows = '';
 let expiryTimer;
 let intervalDirty = false;
+let pushError = '';
 
 function showToast(message) {
   const toast = get('toast');
@@ -32,6 +33,14 @@ async function act(action) {
     busy = false;
     if (current) render();
   }
+}
+
+function runPushAction(action) {
+  return act(async () => {
+    pushError = '';
+    try { await action(); }
+    catch (error) { pushError = error.message?.replace(/^Error: /, '') || '操作未完成，请重试。'; }
+  });
 }
 
 function showPage(page) {
@@ -157,14 +166,15 @@ function render() {
   const pushStatus = delivery.status === 'blocked' ? '需检查配置' : delivery.configured ? '已配置' : '未配置';
   text('push-status', pushStatus);
   get('push-status').dataset.tone = delivery.status === 'blocked' ? 'warn' : delivery.configured ? 'good' : 'neutral';
-  text('storage-note', delivery.configured && !delivery.persistent ? '令牌仅保留到本次退出。' : '令牌使用系统安全存储。');
-  get('save-token').disabled = busy;
+  get('storage-note').hidden = !delivery.configured || delivery.persistent;
+  get('push-connect').disabled = busy;
+  get('push-actions').hidden = !delivery.configured;
   get('push-test').disabled = busy || !delivery.configured;
-  get('remove-token').hidden = !delivery.configured;
   get('remove-token').disabled = busy;
-  get('push-feedback').hidden = !delivery.text;
-  get('push-feedback').dataset.tone = ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : 'neutral';
-  text('push-feedback', delivery.at ? `${time.format(delivery.at)} · ${delivery.text}` : delivery.text);
+  get('push-feedback').hidden = !pushError && !delivery.text;
+  get('push-feedback').dataset.tone = pushError || ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : 'neutral';
+  const deliveryNote = delivery.at ? `${time.format(delivery.at)} · ${delivery.text}` : delivery.text;
+  text('push-feedback', pushError || deliveryNote);
 }
 
 function receive(state) {
@@ -201,15 +211,9 @@ if (!app) {
   }
   get('push-setup').addEventListener('click', () => act(() => app.pushSetup()));
   get('push-guide').addEventListener('click', () => act(() => app.pushGuide()));
-  get('token-form').addEventListener('submit', event => {
-    event.preventDefault();
-    const field = get('push-token');
-    const token = field.value.trim();
-    field.value = '';
-    void act(async () => { await app.saveToken(token); showToast('微信推送令牌已配置。'); });
-  });
-  get('remove-token').addEventListener('click', () => act(async () => { await app.saveToken(null); showToast('微信推送令牌已移除。'); }));
-  get('push-test').addEventListener('click', () => act(async () => { showToast(await app.testPush()); }));
+  get('push-connect').addEventListener('click', () => runPushAction(app.connectPush));
+  get('remove-token').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('微信推送令牌已移除。'); }));
+  get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));
   window.addEventListener('focus', () => { if (current) render(); });

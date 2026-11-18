@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
 const path = require('node:path');
@@ -29,7 +29,7 @@ let exiting = false;
 let sending = false;
 let editing = false;
 let changingToken = false;
-let lastTest = 0;
+let nextPushTestAt = 0;
 
 // Electron uses its internal app name for the macOS Keychain service.
 // Keep that identity and the profile path for settings saved by older releases.
@@ -223,6 +223,42 @@ async function dispatch(message, signal) {
   finally { sending = false; }
 }
 
+async function storePushToken(token) {
+  const persistent = await prefs.saveToken(token);
+  monitor.setDelivery(Boolean(token), persistent, token && !persistent ? '系统安全存储不可用，令牌仅保留到本次退出。' : '');
+}
+
+async function testPushConnection(importToken) {
+  if (!importToken && !prefs.token) throw new UserError('请先导入 PushPlus 令牌。');
+  if (sending || changingToken) throw new UserError('通知正在处理，请稍候。');
+  const now = Date.now();
+  if (now < Math.max(nextPushTestAt, monitor.pushNotBefore)) throw new UserError('请稍候再发送测试。');
+  changingToken = true;
+  try {
+    let token = prefs.token;
+    if (importToken) {
+      let copied;
+      try { copied = await clipboard.readText(); }
+      catch { throw new UserError('候羽无法读取剪贴板。请允许粘贴后重试。'); }
+      token = parseToken(copied);
+      if (!token) throw new UserError('请在 PushPlus「一对一消息」页点「一键复制」，再导入令牌。');
+    }
+    nextPushTestAt = now + 15000;
+    const result = await sendPush(token, testNotice(now));
+    if (result.kind === 'retry') nextPushTestAt = Math.max(nextPushTestAt, Date.now() + result.retryAfterMs);
+    if (importToken) {
+      if (result.kind === 'retry') throw new UserError('PushPlus 暂缓接收测试，请稍后重试。');
+      if (result.kind !== 'accepted') throw new UserError(result.text);
+      if (token !== prefs.token || !prefs.encrypted) {
+        try { await storePushToken(token); }
+        catch { throw new UserError('PushPlus 已受理测试，但令牌保存失败。请稍后重试。'); }
+      }
+    }
+    monitor.recordDelivery(result);
+    if (result.kind !== 'accepted') throw new UserError(result.text);
+  } finally { changingToken = false; }
+}
+
 function handle(action, run) {
   ipcMain.handle(`courtwatch:${action}`, async (event, value) => {
     const frame = event.senderFrame;
@@ -261,27 +297,13 @@ function setupIpc() {
     try { await prefs.saveOptions(clean); monitor.setOptions(clean); }
     finally { editing = false; }
   });
-  handle('token', async value => {
-    const token = value === null ? null : parseToken(value);
-    if (value !== null && !token) throw new UserError('请输入 PushPlus 的令牌。');
+  handle('push-connect', () => testPushConnection(true));
+  handle('push-test', () => testPushConnection(false));
+  handle('push-disconnect', async () => {
     if (sending || changingToken) throw new UserError('通知正在处理，请稍候。');
     changingToken = true;
-    try {
-      const persistent = await prefs.saveToken(token);
-      monitor.setDelivery(Boolean(token), persistent, token && !persistent ? '系统安全存储不可用，令牌仅保留到本次退出。' : '');
-      lastTest = 0;
-    } finally { changingToken = false; }
-  });
-  handle('push-test', async () => {
-    if (!prefs.token) throw new UserError('请先保存令牌。');
-    const now = Date.now();
-    if (now < monitor.pushNotBefore) throw new UserError('PushPlus 暂缓接收请求，请稍后再试。');
-    if (now - lastTest < 15000 || sending || changingToken) throw new UserError('请等待当前通知处理完成后再试。');
-    lastTest = now;
-    const result = await dispatch(testNotice(now));
-    monitor.recordDelivery(result);
-    if (result.kind !== 'accepted') throw new UserError(result.text);
-    return result.text;
+    try { await storePushToken(null); }
+    finally { changingToken = false; }
   });
   handle('push-guide', () => shell.openExternal(PUSH_GUIDE));
   handle('push-setup', () => shell.openExternal(PUSH_SETUP));

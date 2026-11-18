@@ -104,17 +104,22 @@
         <div class="push-grid">
           <section class="card push-card" aria-labelledby="push-title">
             <div class="card-head">
-              <div><h2 id="push-title">连接 PushPlus</h2><p>请关注服务号并完成实名认证。</p></div>
+              <div><h2 id="push-title">接入微信</h2><p>通过「pushplus 推送加」服务号接收提醒。</p></div>
               <span class="status-chip" id="push-status" data-tone="neutral">未配置</span>
             </div>
             <div class="push-body">
-              <div class="push-links"><button type="button" class="quiet" id="push-setup">获取令牌 ↗</button><button type="button" class="quiet" id="push-guide">接入说明 ↗</button></div>
-              <form id="token-form">
-                <label for="push-token">推送令牌</label>
-                <div class="token-row"><input id="push-token" type="password" placeholder="粘贴 PushPlus 令牌" autocomplete="off" spellcheck="false" maxlength="128" required><button class="button primary" id="save-token" type="submit">保存令牌</button></div>
-              </form>
-              <p id="storage-note">令牌使用系统安全存储。</p>
-              <div class="push-actions"><button type="button" class="button" id="push-test" disabled>发送测试</button><button type="button" class="quiet danger" id="remove-token" hidden>移除令牌</button></div>
+              <p class="push-instructions">用微信扫码登录 PushPlus，关注服务号并完成实名认证。在「一对一消息」页点击「一键复制」。</p>
+              <div class="push-links">
+                <button type="button" class="button" id="push-setup">打开 PushPlus ↗</button>
+                <button type="button" class="button primary" id="push-connect" aria-describedby="import-note">导入并测试</button>
+                <button type="button" class="quiet" id="push-guide">接入说明 ↗</button>
+              </div>
+              <p id="import-note">导入时读取复制好的令牌，提交给 PushPlus 发送一条测试。受理后由系统安全存储保存。</p>
+              <div class="push-actions" id="push-actions" hidden>
+                <button type="button" class="button" id="push-test" disabled>再次发送测试</button>
+                <button type="button" class="quiet danger" id="remove-token">移除令牌</button>
+              </div>
+              <p id="storage-note" hidden>令牌仅保留到本次退出。</p>
               <p class="feedback" id="push-feedback" role="status" hidden></p>
             </div>
           </section>
