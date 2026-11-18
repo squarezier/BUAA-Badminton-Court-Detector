@@ -22,7 +22,7 @@ const auditedVenues = [
 ];
 
 function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
-  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false }) {
+  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [] }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
   const table = document.querySelector('table');
   const head = table.createTHead();
@@ -71,11 +71,13 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         const available = !soldBetweenPages && slots.some(([date, start, ids]) => date === selected && start === current && ids.includes(court));
         const disabled = selected === 0 && current < 14;
         const block = document.createElement('div');
-        block.className = `reserveBlock position ${available ? 'free' : disabled ? 'free disabled' : 'reserved'}`;
+        const special = otherCells.find(entry => entry.day === selected && entry.hour === current && entry.court === court);
+        const status = special?.status ?? (available ? 'free' : disabled ? 'free disabled' : 'reserved');
+        block.className = `reserveBlock position ${status}`;
         block.textContent = '￥15.00';
         if (available && inconsistentFill) block.style.backgroundColor = inconsistentFill;
         const cell = row.insertCell();
-        if (available && hiddenAvailableCell) cell.style.opacity = '0';
+        if (special?.hidden || (available && hiddenAvailableCell)) cell.style.opacity = '0';
         cell.append(block);
       }
     }
@@ -106,7 +108,7 @@ async function run() {
   const page = new BrowserWindow({ show: false, webPreferences: preferences });
   const clock = hour => `${String(hour).padStart(2, '0')}:00`;
   async function readFixture(spec) {
-    const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
+    const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved,.reservation{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
       <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div>
       <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div><span>11月20日</span></div></div>
       <div class="spaceTable"><table></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
@@ -136,6 +138,15 @@ async function run() {
   const overlappingPages = await readFixture({ opening: 7, courts: [1, 2], slots: [[1, 11, [1]], [1, 12, [2]]], overlapping: true });
   assert.deepEqual(overlappingPages.days[1].slots.map(({ start, court }) => [start, court]), [['12:00', 2]],
     'a later page supersedes a green cell that was sold in an overlapping time column');
+  assert.ok(overlappingPages.days[1].reserved.some(slot => slot.start === '11:00' && slot.court === 1));
+  const separateStates = await readFixture({ opening: 7, courts: [1, 2, 3, 4], slots: [[1, 9, [4]]], otherCells: [
+    { day: 1, hour: 9, court: 1, status: 'reservation' },
+    { day: 1, hour: 9, court: 2, status: 'reserved disabled' },
+    { day: 1, hour: 10, court: 1, status: 'reserved', hidden: true },
+  ] });
+  assert.deepEqual(separateStates.days[1].reserved.filter(slot => slot.start === '09:00').map(slot => slot.court), [3]);
+  assert.deepEqual(separateStates.days[1].slots.filter(slot => slot.start === '09:00').map(slot => slot.court), [4]);
+  assert.ok(!separateStates.days[1].reserved.some(slot => slot.start === '10:00' && slot.court === 1));
   const invisible = await readFixture({ ...auditedVenues[2], hiddenAvailableCell: true });
   assert.deepEqual(invisible, { error: 'colors' }, 'a green block hidden by its parent is unverified');
   const incomplete = await readFixture({ ...auditedVenues[0], missingHour: 19 });

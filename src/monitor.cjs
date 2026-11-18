@@ -148,17 +148,53 @@ class CourtMonitor {
     const now = this.now();
     const upcoming = sample.slots.filter(slot => startsAt(slot) > now);
     const prior = this.previous.get(id);
-    const current = new Map(upcoming.map(slot => [slotKey(slot), slot]));
+    const available = new Map(upcoming.map(slot => [slotKey(slot), slot]));
+    const reserved = new Set((sample.reserved ?? []).map(slotKey));
     this.snapshots.set(id, { at: now, dates: sample.dates, slots: upcoming, error: '' });
     if (prior && this.delivery.configured) {
       for (const [key, item] of this.pending) {
-        if (item.venue === id && !current.has(key)) this.pending.delete(key);
+        if (item.venue === id && !available.has(key)) this.pending.delete(key);
       }
-      for (const [key, slot] of current) {
-        if (!prior.has(key) || this.pending.has(key)) this.pending.set(key, slot);
+      for (const [key, slot] of available) {
+        const queued = this.pending.get(key);
+        if (prior.available.has(key) && !queued) continue;
+        this.pending.set(key, { ...slot, reopened: queued?.reopened || prior.reserved.has(key) });
       }
     }
-    this.previous.set(id, current);
+    this.previous.set(id, { available, reserved });
+  }
+
+  async notifyPending(failedVenues, signal) {
+    const pending = this.pending;
+    const reopenedSlots = [];
+    const otherSlots = [];
+    for (const [key, slot] of pending) {
+      if (startsAt(slot) <= this.lastAt) pending.delete(key);
+      else if (!failedVenues.has(slot.venue)) (slot.reopened ? reopenedSlots : otherSlots).push(slot);
+    }
+    for (const [slots, reopened] of [[reopenedSlots, true], [otherSlots, false]]) {
+      if (!slots.length) continue;
+      const now = this.now();
+      if (signal.aborted || this.pending !== pending || !this.delivery.configured ||
+          this.delivery.status === 'blocked' || now < this.pushNotBefore) return;
+      const batch = slots.filter(slot => startsAt(slot) > now);
+      // After dispatch, an interrupted request may already have been accepted.
+      for (const slot of slots) pending.delete(slotKey(slot));
+      if (!batch.length) continue;
+      let result;
+      try {
+        result = await this.dispatch(notice(this.options.campus, batch, now, { reopened }), signal);
+      } catch {
+        result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
+      }
+      // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
+      if (this.pending !== pending) return;
+      if (result.kind === 'retry' || result.kind === 'blocked') {
+        for (const slot of batch) pending.set(slotKey(slot), slot);
+      }
+      this.recordDelivery(result);
+      if (result.kind !== 'accepted') return;
+    }
   }
 
   async check() {
@@ -190,28 +226,7 @@ class CourtMonitor {
         }
       }
       this.lastAt = this.now();
-      for (const [key, slot] of this.pending) {
-        if (startsAt(slot) <= this.lastAt) this.pending.delete(key);
-      }
-      const pending = this.pending;
-      const batch = [...pending].filter(([, slot]) => !failed.has(slot.venue));
-      if (batch.length && this.delivery.configured && this.delivery.status !== 'blocked' && this.lastAt >= this.pushNotBefore) {
-        // Once handed off, a cancelled request may already have been accepted.
-        for (const [key] of batch) pending.delete(key);
-        let result;
-        try {
-          result = await this.dispatch(notice(this.options.campus, batch.map(([, slot]) => slot), this.lastAt), task.signal);
-        } catch {
-          result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
-        }
-        // Pausing or replacing the connection discards the old queue. Sleep
-        // keeps it, so a confirmed rejection can still be retried after waking.
-        if (this.pending !== pending) return;
-        if (result.kind === 'retry' || result.kind === 'blocked') {
-          for (const [key, slot] of batch) pending.set(key, slot);
-        }
-        this.recordDelivery(result);
-      }
+      await this.notifyPending(failed, task.signal);
     } finally {
       if (this.task === task) {
         this.task = null;

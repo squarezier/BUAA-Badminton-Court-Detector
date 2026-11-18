@@ -67,27 +67,41 @@ function slotKey({ venue, date, start, end, court }) {
   return `${venue}/${date}/${start}/${end}/${court}`;
 }
 
+function validatedCourt({ court, start, end }) {
+  if (!Number.isInteger(court) || court < 1 || court > 120 || !validTime(start) || !validTime(end) || start >= end) {
+    throw new Error('官网时段或场号格式异常。');
+  }
+  return { court, start, end };
+}
+
 function validatedSnapshot(id, days, started) {
   const knownDays = calendarDates(started);
   if (!Array.isArray(days) || !days.length || days.length > 7) throw new Error('官网返回的日期范围异常。');
   const slots = new Map();
+  const reserved = new Map();
   const dates = new Set();
   for (const day of days) {
     const date = knownDays.get(day.label);
-    if (!date || dates.has(date) || !Array.isArray(day.slots) || day.slots.length > 1024) {
+    const booked = day.reserved ?? [];
+    if (!date || dates.has(date) || !Array.isArray(day.slots) || day.slots.length > 1024 ||
+        !Array.isArray(booked) || booked.length > 1024) {
       throw new Error('官网日期或场次数量异常。');
     }
     dates.add(date);
-    for (const { court, start, end, price } of day.slots) {
-      if (!Number.isInteger(court) || court < 1 || court > 120 || !validTime(start) || !validTime(end) ||
-          start >= end || !Number.isFinite(price) || price < 0 || price > 9999) {
-        throw new Error('官网时段或场号格式异常。');
-      }
-      const slot = { venue: id, date, start, end, court, price };
+    for (const row of day.slots) {
+      const { price } = row;
+      if (!Number.isFinite(price) || price < 0 || price > 9999) throw new Error('官网场地价格格式异常。');
+      const slot = { venue: id, date, ...validatedCourt(row), price };
       slots.set(slotKey(slot), slot);
     }
+    for (const row of booked) {
+      const slot = { venue: id, date, ...validatedCourt(row) };
+      const key = slotKey(slot);
+      if (slots.has(key)) throw new Error('官网同一场次出现互相冲突的状态。');
+      reserved.set(key, slot);
+    }
   }
-  return { dates: [...dates].sort(), slots: [...slots.values()] };
+  return { dates: [...dates].sort(), slots: [...slots.values()], reserved: [...reserved.values()] };
 }
 
 function groupSlots(slots) {

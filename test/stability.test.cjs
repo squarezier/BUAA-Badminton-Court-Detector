@@ -212,6 +212,33 @@ test('rate-limited notifications wait and discard slots that are sold in the mea
   assert.doesNotMatch(messages[1].content, /2号/);
 });
 
+test('a rate-limited reopening keeps its type and waits before sending either batch', async t => {
+  let now = baselineTime;
+  let booking = { ...stamped(slot(1)), reserved: [slot(4)] };
+  const messages = [];
+  const monitor = setup(t, {
+    now: () => now,
+    async checkVenue() { return booking; },
+    async dispatch(message) {
+      messages.push(message);
+      return messages.length === 1 ? { kind: 'retry', retryAfterMs: 60000, text: 'rate-limited' } : accepted;
+    },
+  });
+  await monitor.check();
+  booking = stamped(slot(1), slot(2), slot(4));
+  await monitor.check();
+  now += 30000;
+  await monitor.check();
+  assert.deepEqual(messages.map(message => message.title), ['候羽｜沙河校区疑似退订 1 场次']);
+  now += 30000;
+  await monitor.check();
+  assert.deepEqual(messages.map(message => message.title), [
+    '候羽｜沙河校区疑似退订 1 场次', '候羽｜沙河校区疑似退订 1 场次', '候羽｜沙河校区新增 1 场次',
+  ]);
+  assert.match(messages[1].markdown, /4号/);
+  assert.match(messages[2].markdown, /2号/);
+});
+
 test('PushPlus transient, rejected and malformed responses are distinguished', async () => {
   const connection = decodePushConnection('synthetic-test-token');
   const message = { title: 'test', content: '<p>test</p>' };

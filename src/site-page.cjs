@@ -24,7 +24,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
   function hasGreenFill(block) {
     const style = getComputedStyle(block);
     const rgba = style.backgroundColor.match(/^rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)$/);
-    if (!rgba || !visible(block)) return false;
+    if (!rgba) return false;
     const [, red, green, blue, alpha = '1'] = rgba;
     // The site's green is rgb(138, 212, 112). Allow changes in shade while
     // rejecting the table's red, gray, white, and transparent fills.
@@ -43,27 +43,36 @@ async function readBookingPage({ todayLabel, nowClock }) {
     const courtRows = [...table.rows].filter(row => /^\s*\d+号\s*$/.test(row.cells[0]?.innerText ?? ''));
     if (!courtRows.length || courtRows.some(row => row.cells.length !== times.length + 1)) return null;
     const slots = [];
+    const reserved = [];
     let colorConflict = false;
     for (const row of courtRows) {
       const court = Number.parseInt(row.cells[0].innerText, 10);
       for (const [index, cell] of [...row.cells].slice(1).entries()) {
         const block = cell.querySelector('.reserveBlock');
         if (!block) return null;
-        const unavailable = block.matches('.reserved, .disabled, [disabled], [aria-disabled="true"]');
-        const available = block.classList.contains('free') && !unavailable;
+        const booked = block.classList.contains('reserved');
+        const otherwiseUnavailable = block.matches('.reservation, .disabled, [disabled], [aria-disabled="true"]');
+        const unavailable = booked || otherwiseUnavailable;
+        const free = block.classList.contains('free');
+        const available = free && !unavailable;
         if (!available && !unavailable) return null;
-        const green = hasGreenFill(block);
+        const shown = visible(block);
+        const green = shown && hasGreenFill(block);
         if (available !== green) colorConflict = true;
+        const [start, end] = times[index];
+        // The site uses "reservation" for unpaid holds and "reserved" for bookings.
+        if (booked && shown && !free && !otherwiseUnavailable) {
+          reserved.push({ court, start, end });
+        }
         if (!available || !green) continue;
         const amount = block.innerText.trim().match(/^[¥￥]\s*(\d+(?:\.\d{1,2})?)$/);
         const freeOfCharge = /^免费$/.test(block.innerText.trim());
         if (!amount && !freeOfCharge) return null;
-        const [start, end] = times[index];
         slots.push({ court, start, end, price: freeOfCharge ? 0 : Number(amount[1]) });
       }
     }
     return {
-      date: activeDate(), times, slots, colorConflict,
+      date: activeDate(), times, slots, reserved, colorConflict,
       first: times[0][0], last: times.at(-1)[1],
       back: header.querySelector('.ivu-icon-ios-arrow-back'),
       forward: header.querySelector('.ivu-icon-ios-arrow-forward'),
@@ -98,7 +107,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
     const affectsTimetable = node => node.nodeType === 1 &&
       (node.matches(timetableData) || node.querySelector(timetableData));
     const status = classes => (classes ?? '').split(/\s+/)
-      .filter(name => ['free', 'reserved', 'disabled'].includes(name)).sort().join(' ');
+      .filter(name => ['free', 'reservation', 'reserved', 'disabled'].includes(name)).sort().join(' ');
     const changedData = change => {
       const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
       if (change.type !== 'attributes') {
@@ -150,7 +159,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
 
   for (const label of labels) {
     if (label === todayLabel && mins(nowClock) >= mins(closing)) {
-      days.push({ label, slots: [] });
+      days.push({ label, slots: [], reserved: [] });
       continue;
     }
     const button = dateButtons().find(item => labelOf(item) === label);
@@ -159,7 +168,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
     const dayView = activeDate() === label ? await waitFor(readDay) : await afterTimetableChange(button, readDay);
     if (!dayView) return { error: 'layout' };
     if (dayView.closed) {
-      days.push({ label, slots: [] });
+      days.push({ label, slots: [], reserved: [] });
       continue;
     }
     let view = dayView;
@@ -183,9 +192,10 @@ async function readBookingPage({ todayLabel, nowClock }) {
         const earlier = columns.get(start);
         if (earlier && earlier.end !== end) return { error: 'layout' };
         // An overlapping column is more recent, even if it now has no slots.
-        columns.set(start, { end, slots: [] });
+        columns.set(start, { end, slots: [], reserved: [] });
       }
       for (const slot of view.slots) columns.get(slot.start).slots.push(slot);
+      for (const slot of view.reserved) columns.get(slot.start).reserved.push(slot);
       if (view.last === closing) break;
       if (!view.forward || mins(view.last) > mins(closing) || page === 7) return { error: 'layout' };
       const previousLast = view.last;
@@ -196,7 +206,8 @@ async function readBookingPage({ todayLabel, nowClock }) {
       if (!view || (view.first < previousLast && !columns.has(view.first))) return { error: 'layout' };
     }
     if (view.last !== closing) return { error: 'layout' };
-    days.push({ label, slots: [...columns.values()].flatMap(column => column.slots) });
+    const verified = [...columns.values()];
+    days.push({ label, slots: verified.flatMap(column => column.slots), reserved: verified.flatMap(column => column.reserved) });
   }
   return { days };
 }

@@ -23,6 +23,16 @@ test('normalizes Beijing dates across a year boundary and validates visible cour
   assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [{ ...row, court: '3' }] }], now));
 });
 
+test('validated snapshots keep confirmed reservations separate from green slots', () => {
+  const reserved = { court: 4, start: '17:00', end: '18:00' };
+  const available = { ...reserved, court: 5, price: 25 };
+  const snapshot = validatedSnapshot('57', [{ label: '11月18日', slots: [available], reserved: [reserved, reserved] }], now);
+  assert.deepEqual(snapshot.slots, [slot(5)]);
+  assert.deepEqual(snapshot.reserved, [{ ...reserved, venue: '57', date: '2026-11-18' }]);
+  assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [available], reserved: [available] }], now));
+  assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [], reserved: [{ ...reserved, start: '25:00' }] }], now));
+});
+
 test('a first sample establishes a baseline and only new slots are sent', async t => {
   let response = sample(slot(1));
   const pushes = [];
@@ -44,6 +54,47 @@ test('a first sample establishes a baseline and only new slots are sent', async 
   assert.equal(pushes[0].title, '候羽｜沙河校区新增 2 场次');
   assert.match(pushes[0].content, /3、5号/);
   assert.doesNotMatch(pushes[0].content, /1号/);
+});
+
+test('a confirmed reservation reopening gets a distinct alert for the exact venue and slot', async t => {
+  const reserved = slot(3, '38');
+  const openingNextDay = { ...reserved, date: '2026-11-19' };
+  const response = new Map([
+    ['38', { ...sample(slot(1, '38')), reserved: [reserved] }],
+    ['39', sample()],
+  ]);
+  const pushes = [];
+  const monitor = new CourtMonitor({
+    options: { campus: 'xueyuanlu', interval: 2 }, now: () => now, onChange() {},
+    async checkVenue(id) { return response.get(id); },
+    async dispatch(message) { pushes.push(message); return { kind: 'accepted', text: 'accepted' }; },
+  });
+  t.after(() => monitor.stop());
+  monitor.setAuth('signed-in');
+  monitor.setDelivery(true, true);
+  monitor.start();
+  await monitor.check();
+  assert.equal(pushes.length, 0);
+
+  response.set('38', sample(slot(1, '38'), reserved, openingNextDay));
+  response.set('39', sample(slot(3, '39')));
+  await monitor.check();
+  await monitor.check();
+  assert.deepEqual(pushes.map(message => message.title), ['候羽｜学院路校区疑似退订 1 场次', '候羽｜学院路校区新增 2 场次']);
+  const card = pushes[0].feishuCard.body.elements.map(element => element.content).join('\n');
+  assert.match(card, /已预约.*绿色可约/);
+  assert.match(card, /11月18日[\s\S]*17:00–18:00 · 体育馆主馆[\s\S]*场号 \*\*3 号\*\*[\s\S]*¥25\/场/);
+  assert.match(card, /venue-reservation\/38/);
+  assert.doesNotMatch(card, /11月19日|训练馆|venue-reservation\/39|1 号/);
+  assert.match(pushes[1].markdown, /11月19日/);
+  assert.match(pushes[1].markdown, /体育馆训练馆/);
+
+  response.set('38', { ...sample(slot(1, '38'), openingNextDay), reserved: [reserved] });
+  await monitor.check();
+  response.set('38', sample(slot(1, '38'), reserved, openingNextDay));
+  await monitor.check();
+  assert.equal(pushes.length, 3);
+  assert.equal(pushes[2].title, pushes[0].title, 'a second verified reservation and release is a new event');
 });
 
 test('unverified venue data is hidden, with no false alerts on recovery', async t => {
