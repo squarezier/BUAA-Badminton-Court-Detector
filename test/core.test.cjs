@@ -138,7 +138,7 @@ test('Feishu accepts only the official HTTPS webhook path', () => {
   assert.equal(feishuConnection({ webhook, secret: 'first\nsecond' }), null);
 });
 
-test('Feishu sends a signed group post with the official booking link', async t => {
+test('Feishu sends a signed availability card with the official booking link', async t => {
   t.mock.method(Date, 'now', () => 1599360473000);
   const connection = feishuConnection({ webhook, secret: 'demo' });
   const message = notice('shahe', [slot(3), slot(5)], now);
@@ -150,16 +150,35 @@ test('Feishu sends a signed group post with the official booking link', async t 
     assert.equal(payload.timestamp, '1599360473');
     assert.equal(payload.sign, 'l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=');
     assert.doesNotMatch(request.body, /demo/);
-    assert.equal(payload.msg_type, 'post');
-    const { title, content } = payload.content.post.zh_cn;
-    assert.equal(title, '候羽｜沙河校区新增 2 场次');
-    assert.ok(content.flat().some(node => node.tag === 'text' && node.text.includes('3、5号')));
-    assert.deepEqual(content.flat().filter(node => node.tag === 'a'), [
-      { tag: 'a', text: '综合馆预约页', href: 'https://cgyy.buaa.edu.cn/venue/venue-reservation/57' },
-    ]);
+    assert.equal(payload.msg_type, 'interactive');
+    const { schema, header, body: { elements } } = payload.card;
+    assert.equal(schema, '2.0');
+    assert.equal(header.title.content, '候羽｜沙河校区新增 2 场次');
+    assert.match(elements[0].content, /\*\*11月18日 周三\*\*/);
+    assert.match(elements[0].content, /\*\*17:00–18:00 · 综合馆\*\*/);
+    assert.match(elements[0].content, /场号 \*\*3、5 号\*\*.*¥25\/场/u);
+    assert.match(elements.at(-1).content, /\[综合馆 ↗\]\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/u);
     return Response.json({ code: 0 });
   };
   assert.equal((await sendPush(connection, message, undefined, adapter)).kind, 'accepted');
+});
+
+test('Feishu lists each date separately and caps large notices within the request limit', async () => {
+  const first = { ...slot(3, '38'), date: '2026-11-19' };
+  const second = { ...slot(5, '39'), date: '2026-11-20', price: 0 };
+  const elements = notice('xueyuanlu', [second, first], now).feishuCard.body.elements;
+  assert.match(elements[0].content, /11月19日 周四[\s\S]*体育馆主馆[\s\S]*3 号/u);
+  assert.match(elements[1].content, /11月20日 周五[\s\S]*体育馆训练馆[\s\S]*5 号[\s\S]*免费/u);
+  const crowded = Array.from({ length: 30 }, (_, index) =>
+    Array.from({ length: 120 }, (_, court) => ({
+      ...slot(court + 1, '38'), date: index < 15 ? first.date : second.date, price: index + 1,
+    }))).flat();
+  const adapter = async (_url, request) => {
+    assert.ok(Buffer.byteLength(request.body) <= 20000);
+    assert.match(request.body, /另有 [1-9]\d* 组场次/u);
+    return Response.json({ code: 0 });
+  };
+  assert.equal((await sendPush(feishuConnection({ webhook }), notice('xueyuanlu', crowded, now), undefined, adapter)).kind, 'accepted');
 });
 
 test('Feishu distinguishes rejections, throttling and uncertain delivery', async () => {

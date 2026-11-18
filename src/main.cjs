@@ -177,13 +177,18 @@ function loadCampusPage(win, url) {
 
 function openCampus(url, login) {
   if (campusWindow && !campusWindow.isDestroyed()) {
-    campusWindow.show();
-    campusWindow.focus();
-    if (!login && monitor.auth !== 'opening' && campusWindow.webContents.getURL() !== url) loadCampusPage(campusWindow, url);
-    return;
+    if (login && monitor.auth !== 'opening') {
+      campusWindow.destroy();
+    } else {
+      campusWindow.show();
+      campusWindow.focus();
+      if (!login && monitor.auth !== 'opening' && campusWindow.webContents.getURL() !== url) loadCampusPage(campusWindow, url);
+      return;
+    }
   }
   const previous = monitor.auth;
   if (login) monitor.setAuth('opening');
+  const awaitingAuth = login ? 'opening' : 'signed-out';
   const win = new BrowserWindow({
     width: 1060, height: 800, minWidth: 700, minHeight: 560, title: '北航官方网站',
     icon: ICON, autoHideMenuBar: true, webPreferences: { ...webPreferences, session: campusSession },
@@ -197,13 +202,14 @@ function openCampus(url, login) {
     if (host) win.setTitle(`${host === 'sso.buaa.edu.cn' ? '北航统一身份认证' : '北航官方场馆预约'} · ${host}`);
   };
   const checkSignIn = async () => {
-    if (checking || win.isDestroyed()) return;
-    updateTitle();
-    const url = httpsUrl(win.webContents.getURL());
+    if (checking || win.isDestroyed() || monitor.auth !== awaitingAuth) return;
+    const location = win.webContents.getURL();
+    const url = httpsUrl(location);
     if (!url || url.origin !== CAMPUS_ORIGIN || !/^\/venue\/(home|venue-reservation\/\d+)\/?$/.test(url.pathname)) return;
     checking = true;
     try {
-      if (await execute(win, signedInOnBookingSite) && !win.isDestroyed()) {
+      if (await execute(win, signedInOnBookingSite) && !win.isDestroyed() &&
+          monitor.auth === awaitingAuth && win.webContents.getURL() === location) {
         monitor.setAuth('signed-in');
         if (login) { win.close(); showMain(); }
       }

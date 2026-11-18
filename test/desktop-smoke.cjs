@@ -21,7 +21,8 @@ const auditedVenues = [
   { opening: 8, courts: [1, 2, 3, 4, 5, 6, 7, 8], slots: [[2, 12, [5, 7, 8]], [2, 13, [7]], [2, 14, [4, 5, 7, 8]], [2, 15, [8]]] },
 ];
 
-function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270 }) {
+function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
+  decorateBeforeRefresh = false, hiddenAvailableCell = false }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
   const table = document.querySelector('table');
   const closure = document.querySelector('.ivu-table-tip');
@@ -61,7 +62,9 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         block.className = `reserveBlock position ${available ? 'free' : disabled ? 'free disabled' : 'reserved'}`;
         block.textContent = '￥15.00';
         if (available && inconsistentFill) block.style.backgroundColor = inconsistentFill;
-        row.insertCell().append(block);
+        const cell = row.insertCell();
+        if (available && hiddenAvailableCell) cell.style.opacity = '0';
+        cell.append(block);
       }
     }
   }
@@ -69,6 +72,11 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
     button.onclick = () => {
       buttons[selected].classList.remove('active');
       button.classList.add('active');
+      if (decorateBeforeRefresh) {
+        const stale = table.querySelector('.reserveBlock');
+        stale.style.borderColor = 'blue';
+        stale.classList.add('selected-time-outline');
+      }
       setTimeout(() => { selected = index; page = 0; draw(); }, switchDelay);
     };
   });
@@ -102,6 +110,11 @@ async function run() {
   assert.deepEqual(conflict, { error: 'colors' });
   const afterClosure = await readFixture({ ...auditedVenues[1], closed: [0], switchDelay: 650 });
   assert.deepEqual(afterClosure.days.map(day => day.slots.length), [0, 8, 7]);
+  const afterDecoration = await readFixture({ ...auditedVenues[1], decorateBeforeRefresh: true, switchDelay: 900 });
+  assert.equal(afterDecoration.error, undefined, 'a date switch can complete after the real refresh');
+  assert.deepEqual(afterDecoration.days.map(day => day.slots.length), [0, 8, 7], 'visual changes must not make stale rows count for a new date');
+  const invisible = await readFixture({ ...auditedVenues[2], hiddenAvailableCell: true });
+  assert.deepEqual(invisible, { error: 'colors' }, 'a green block hidden by its parent is unverified');
   const incomplete = await readFixture({ ...auditedVenues[0], missingHour: 19 });
   assert.deepEqual(incomplete, { error: 'layout' });
   page.destroy();
@@ -128,7 +141,7 @@ async function run() {
     if (!Object.hasOwn(assets, item)) return new Response('Not found', { status: 404 });
     return new Response(await fs.readFile(path.join(source, 'ui', item.slice(1))), { headers: { 'content-type': `${assets[item]}; charset=utf-8` } });
   });
-  const window = new BrowserWindow({ width: 1130, height: 820, show: false, webPreferences: { ...preferences, preload: path.join(source, 'preload.cjs') } });
+  const window = new BrowserWindow({ width: 1130, height: 820, useContentSize: true, show: false, webPreferences: { ...preferences, preload: path.join(source, 'preload.cjs') } });
   await window.loadURL('courtwatch://app/index.html');
   await window.webContents.insertCSS('* { transition: none !important; }', { cssOrigin: 'user' });
   await window.webContents.executeJavaScript("Date.now = () => Date.parse('2026-11-18T14:08:00+08:00'); window.dispatchEvent(new Event('focus'))");
@@ -159,9 +172,9 @@ async function run() {
   await paint();
   assert.equal(await window.webContents.executeJavaScript("document.querySelector('#page-feishu').hidden"), false);
   await fs.writeFile(path.join(target, 'feishu.png'), (await window.webContents.capturePage()).toPNG());
-  window.setSize(760, 630);
+  window.setContentSize(740, 600);
   await paint();
-  const viewportFit = () => window.webContents.executeJavaScript('innerWidth === 760 && document.documentElement.scrollWidth <= innerWidth');
+  const viewportFit = () => window.webContents.executeJavaScript('innerWidth <= 760 && document.documentElement.scrollWidth <= innerWidth');
   assert.equal(await viewportFit(), true, 'Feishu page fits the minimum width');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();

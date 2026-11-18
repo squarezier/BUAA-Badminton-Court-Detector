@@ -47,8 +47,9 @@ global.fetch = async (url, request) => {
   pushRequests++;
   assert.equal(url, webhook);
   assert.equal(request.method, 'POST');
-  const { msg_type, timestamp, sign, content: { post: { zh_cn: { title, content } } } } = JSON.parse(request.body);
-  assert.equal(msg_type, 'post');
+  const { msg_type, timestamp, sign, card: { header, body } } = JSON.parse(request.body);
+  const title = header.title.content;
+  assert.equal(msg_type, 'interactive');
   assert.match(timestamp, /^\d{10}$/);
   assert.match(sign, /^[A-Za-z0-9+/]{43}=$/);
   assert.doesNotMatch(request.body, /synthetic-feishu-signing-key/);
@@ -56,7 +57,7 @@ global.fetch = async (url, request) => {
     assert.match(title, /测试提醒/);
     return Response.json({ code: 19021 }, { status: 400 });
   }
-  pushed.push({ title, content: content.flat().map(node => node.text).join('\n') });
+  pushed.push({ title, content: body.elements.map(element => element.content ?? '').join('\n') });
   return Response.json({ code: 0 });
 };
 
@@ -92,7 +93,11 @@ async function run(win) {
   await mocked;
   const js = code => win.webContents.executeJavaScript(code);
   const state = () => js('window.courtWatch.state()');
-  const click = selector => js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  async function click(selector) {
+    const target = `document.querySelector(${JSON.stringify(selector)})`;
+    await waitFor(() => js(`Boolean(${target} && !${target}.matches(':disabled'))`), `enabled control ${selector}`);
+    return js(`${target}.click()`);
+  }
   async function waitFor(passes, description) {
     for (let tries = 0; tries < 150; tries++) {
       const current = await state();
@@ -162,8 +167,8 @@ async function run(win) {
   visibleCourts = [1, 4];
   wake();
   await waitFor(view => view.slotCount === 2 && !view.checking && pushed.length === 2, 'new green slot while hidden');
-  assert.match(pushed[1].content, /4号/);
-  assert.doesNotMatch(pushed[1].content, /1号/);
+  assert.match(pushed[1].content, /4 号/);
+  assert.doesNotMatch(pushed[1].content, /1 号/);
   app.emit('activate');
   assert.equal(win.isVisible(), true);
   cases++;
@@ -173,16 +178,54 @@ async function run(win) {
     wake();
     await waitFor(view => loads > before && !view.checking && view.nextAt !== null, `unchanged scan ${round + 1}`);
     assert.equal(pushed.length, 2);
-    assert.equal(BrowserWindow.getAllWindows().length, 1, 'the scanner window is closed after every round');
+    await waitFor(() => BrowserWindow.getAllWindows().length === 1, 'the scanner window is closed after every round');
   }
   cases++;
 
+  await click('#open-booking');
+  const bookingPage = await waitFor(() => BrowserWindow.getAllWindows().find(page =>
+    page !== win && page.webContents.getURL() === `${campusOrigin}/venue/venue-reservation/57`
+  ), 'official booking window');
+  assert.equal(bookingPage.auth, 'signed-in');
   expired = true;
   wake();
   const last = await waitFor(view => view.auth === 'expired', 'sign-in expires');
   assert.equal(last.running, false);
   assert.equal(last.slotCount, 0);
   assert.equal(last.nextAt, null);
+  assert.equal(pushed.length, 2);
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal((await state()).auth, 'expired', 'an already open booking page cannot revive an expired login');
+  await click('#account-action');
+  await waitFor(view => view.auth === 'opening' && BrowserWindow.getAllWindows().some(page =>
+    page !== win && page.webContents.getURL() === `${campusOrigin}/venue/login`
+  ), 'relogin opens the official login page');
+  expired = false;
+  const loginPage = BrowserWindow.getAllWindows().find(page => page !== win && page.webContents.getURL().endsWith('/venue/login'));
+  loginPage.webContents.reload();
+  await waitFor(view => view.auth === 'signed-in', 'relogin after session expiry');
+  cases++;
+
+  await click('input[name="campus"][value="xueyuanlu"]');
+  await waitFor(view => view.options.campus === 'xueyuanlu', 'switch to Xueyuanlu while paused');
+  assert.equal(JSON.parse(fs.readFileSync(settings, 'utf8')).options.campus, 'xueyuanlu');
+  await click('#monitor-action');
+  const xueyuanlu = await waitFor(view => view.running && !view.checking && view.slotCount === 4, 'both Xueyuanlu venues scanned');
+  assert.deepEqual(xueyuanlu.rows.map(row => row.venue), ['38', '39']);
+  assert.equal(pushed.length, 2);
+  await click('#monitor-action');
+  await waitFor(view => !view.running && view.nextAt === null, 'manual pause cancels scheduling');
+  cases++;
+
+  await click('#account-action');
+  const signedOut = await waitFor(view => view.auth === 'signed-out', 'explicit sign-out');
+  assert.equal(signedOut.delivery.configured, true);
+  cases++;
+
+  await click('[data-page=feishu]');
+  await click('#remove-connection');
+  await waitFor(view => !view.delivery.configured && view.pushService === null, 'disconnect notification provider');
+  assert.equal(storedCiphertext(), null);
   assert.equal(pushed.length, 2);
   cases++;
 

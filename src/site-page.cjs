@@ -4,27 +4,27 @@
 // Their only controls are the date tabs and the timetable paging arrows.
 function signedInOnBookingSite() {
   const authenticated = [...document.querySelectorAll('a, button, li, span, div')].some(element =>
-    element.getClientRects().length && element.textContent.trim() === '退出');
+    element.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && (element.innerText ?? '').trim() === '退出');
   return authenticated;
 }
 
 async function readBookingPage({ todayLabel, nowClock }) {
   const timePattern = /\b(\d{2}:\d{2})\s*[-–—~～]\s*(\d{2}:\d{2})\b/;
   const datePattern = /^\d{1,2}月\d{1,2}日$/;
+  const visible = element => element.checkVisibility({ opacityProperty: true, visibilityProperty: true });
   const dateButtons = () => [...document.querySelectorAll('.date_box > div')].filter(button =>
-    button.getClientRects().length && datePattern.test(labelOf(button)));
+    visible(button) && datePattern.test(labelOf(button)));
   const labelOf = button => button?.querySelector('span')?.textContent.trim() ?? '';
   const activeDate = () => labelOf(dateButtons().find(button => button.classList.contains('active')));
   const busySelector = '.spaceTable .ivu-spin-fix, .ivu-table-wrapper > .ivu-spin-fix';
-  const busy = () => [...document.querySelectorAll(busySelector)].some(
-    element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+  const busy = () => [...document.querySelectorAll(busySelector)].some(visible);
   const validClock = text => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(text);
   const mins = text => Number(text.slice(0, 2)) * 60 + Number(text.slice(3));
 
   function hasGreenFill(block) {
     const style = getComputedStyle(block);
     const rgba = style.backgroundColor.match(/^rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)$/);
-    if (!rgba || style.visibility !== 'visible' || Number(style.opacity) <= 0 || !block.getClientRects().length) return false;
+    if (!rgba || !visible(block)) return false;
     const [, red, green, blue, alpha = '1'] = rgba;
     // The site's green is rgb(138, 212, 112). Allow changes in shade while
     // rejecting the table's red, gray, white, and transparent fills.
@@ -34,7 +34,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
   function readWindow() {
     if (busy()) return null;
     const table = [...document.querySelectorAll('.spaceTable table')].find(candidate =>
-      candidate.getClientRects().length && timePattern.test(candidate.rows[0]?.innerText ?? ''));
+      visible(candidate) && timePattern.test(candidate.rows[0]?.innerText ?? ''));
     if (!table) return null;
     const header = table.rows[0];
     const times = [...header.cells].slice(1).map(cell => cell.innerText.match(timePattern)?.slice(1));
@@ -83,7 +83,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
 
   function closedMessage() {
     return [...document.querySelectorAll('.ivu-table-tip, .spaceTable')].some(element =>
-      element.getClientRects().length && /^(?:该日|当日|当天)?\s*(?:暂无可预约(?:的)?场地|场地(?:暂)?停开放|未开放预约)[。！\s]*$/.test(element.innerText.trim()));
+      visible(element) && /^(?:该日|当日|当天)?\s*(?:暂无可预约(?:的)?场地|场地(?:暂)?停开放|未开放预约)[。！\s]*$/.test(element.innerText.trim()));
   }
 
   function dayFrame(label) {
@@ -92,26 +92,45 @@ async function readBookingPage({ todayLabel, nowClock }) {
   }
 
   async function selectDay(button, label) {
-    const timetableData = '.reserveBlock, .ivu-table-tip, .spaceTable .ivu-spin-fix, .ivu-table-wrapper > .ivu-spin-fix';
+    const timetableData = '.reserveBlock, .ivu-table-tip';
     let changedAt = null;
+    let wasBusy = false;
     const affectsTimetable = node => node.nodeType === 1 &&
-      (node.matches(timetableData) || node.querySelector(timetableData) || node.matches('.ivu-spin-fix'));
-    const observer = new MutationObserver(changes => {
-      for (const change of changes) {
-        const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
-        if (target?.closest(timetableData) || [...change.addedNodes, ...change.removedNodes].some(affectsTimetable)) {
-          changedAt = performance.now();
-          break;
-        }
+      (node.matches(timetableData) || node.querySelector(timetableData));
+    const status = classes => (classes ?? '').split(/\s+/)
+      .filter(name => ['free', 'reserved', 'disabled'].includes(name)).sort().join(' ');
+    const changedData = change => {
+      const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
+      if (change.type !== 'attributes') {
+        return target?.closest(timetableData) || [...change.addedNodes, ...change.removedNodes].some(affectsTimetable);
       }
+      const attribute = change.attributeName;
+      if (target.matches('.ivu-table-tip')) return attribute === 'hidden';
+      if (!target.matches('.reserveBlock')) return false;
+      if (attribute === 'class') return status(change.oldValue) !== status(target.getAttribute('class'));
+      return ['disabled', 'aria-disabled'].includes(attribute) && change.oldValue !== target.getAttribute(attribute);
+    };
+    function trackLoading() {
+      const loading = busy();
+      if (loading) {
+        wasBusy = true;
+        changedAt = null;
+      } else if (wasBusy) {
+        wasBusy = false;
+        changedAt = performance.now();
+      }
+      return loading;
+    }
+    const observer = new MutationObserver(changes => {
+      if (!trackLoading() && changes.some(changedData)) changedAt = performance.now();
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
-      attributeFilter: ['class', 'style', 'aria-disabled'] });
+      attributeOldValue: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'hidden'] });
     try {
       button.click();
       // The active tab changes before the network request settles. Require a
-      // refresh of the timetable cells or loading state before reading it.
-      return await waitFor(() => changedAt !== null && performance.now() - changedAt >= 120 && dayFrame(label));
+      // refresh of the data or a completed loading state before reading it.
+      return await waitFor(() => !trackLoading() && changedAt !== null && performance.now() - changedAt >= 120 && dayFrame(label));
     } finally { observer.disconnect(); }
   }
 

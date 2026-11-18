@@ -10,6 +10,11 @@ const PUSH_RESPONSE_LIMIT = 65536;
 const PUSH_RETRY_DEFAULT = 120000;
 const SERVER_CHAN_RETRY_DEFAULT = 24 * 60 * 60 * 1000;
 const FEISHU_RETRY_DEFAULT = 60000;
+const FEISHU_REQUEST_LIMIT = 20000;
+const FEISHU_DETAIL_BUDGET = 16000;
+const feishuDay = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric', weekday: 'short',
+});
 const FEISHU_ERRORS = {
   19001: '飞书 Webhook 无效，请在群机器人设置里重新复制。',
   19021: '飞书签名校验失败，请核对签名密钥和电脑时间。',
@@ -18,7 +23,43 @@ const FEISHU_ERRORS = {
   9499: '飞书拒绝了消息格式，请检查机器人配置。',
 };
 
-const textLine = text => [{ tag: 'text', text }];
+const markdownBlock = content => ({ tag: 'markdown', content });
+
+function feishuCard(title, at, elements) {
+  return {
+    schema: '2.0',
+    header: {
+      template: 'blue',
+      title: { tag: 'plain_text', content: title },
+      subtitle: { tag: 'plain_text', content: `${beijingClock(at)} · 北京时间` },
+    },
+    body: { direction: 'vertical', elements },
+  };
+}
+
+function feishuAvailability(groups, links) {
+  const byDate = new Map();
+  let shown = 0;
+  let detailBytes = 0;
+  for (const group of groups) {
+    const price = group.price ? `¥${group.price}/场` : '免费';
+    const row = `**${group.start}–${group.end} · ${VENUES[group.venue].label}**  \n场号 **${group.courts.join('、')} 号**　·　${price}`;
+    detailBytes += Buffer.byteLength(JSON.stringify(row));
+    if (detailBytes > FEISHU_DETAIL_BUDGET) break;
+    if (!byDate.has(group.date)) byDate.set(group.date, []);
+    byDate.get(group.date).push(row);
+    shown++;
+  }
+  const elements = [...byDate].map(([date, rows]) => {
+    const label = feishuDay.format(new Date(`${date}T12:00:00+08:00`)).replace(/(星期|周)/u, ' $1');
+    return markdownBlock(`**${label}**\n\n${rows.join('\n\n')}`);
+  });
+  if (shown < groups.length) {
+    elements.push(markdownBlock(`另有 ${groups.length - shown} 组场次，可在候羽查看。`));
+  }
+  elements.push({ tag: 'hr' }, markdownBlock(`**预约**　${links.join('　·　')}\n余量以官网为准。`));
+  return elements;
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -36,24 +77,26 @@ function notice(campus, slots, at) {
   const venues = [...new Set(groups.map(group => group.venue))];
   const links = venues.map(id => `<a href="${venueUrl(id)}">${escapeHtml(VENUES[id].label)}预约页</a>`).join(' · ');
   const markdownLinks = venues.map(id => `[${VENUES[id].label}预约页](${venueUrl(id)})`).join(' · ');
+  const feishuLinks = venues.map(id => `[${VENUES[id].label} ↗](${venueUrl(id)})`);
   const heading = `${productName}于 ${beijingClock(at)}（北京时间）发现以下空场。`;
   const footer = '余量随时变化，请以预约页为准。';
-  const feishuLinks = venues.map(id => [{ tag: 'a', text: `${VENUES[id].label}预约页`, href: venueUrl(id) }]);
+  const title = `${productName}｜${site.label}新增 ${slots.length} 场次`;
   return {
-    title: `${productName}｜${site.label}新增 ${slots.length} 场次`,
+    title,
     content: `<p>${escapeHtml(heading)}</p><ul>${details.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>${more ? `<p>${more}</p>` : ''}<p>${links}</p><p>${footer}</p>`,
     markdown: [heading, details.map(line => `- ${line}`).join('\n'), more, markdownLinks, footer].filter(Boolean).join('\n\n'),
-    feishu: [...[heading, ...details, more].filter(Boolean).map(textLine), ...feishuLinks, textLine(footer)],
+    feishuCard: feishuCard(title, at, feishuAvailability(groups, feishuLinks)),
   };
 }
 
 function testNotice(at) {
   const text = `${beijingClock(at)}（北京时间）发起了一条测试。收到这条消息后，即可通过此渠道接收候羽的空场提醒。`;
+  const title = `${productName}｜测试提醒`;
   return {
-    title: `${productName}｜测试提醒`,
+    title,
     content: `<p>${escapeHtml(text)}</p>`,
     markdown: text,
-    feishu: [textLine(text)],
+    feishuCard: feishuCard(title, at, [markdownBlock(text)]),
   };
 }
 
@@ -107,7 +150,7 @@ function feishuResult(response, data) {
 function pushRequest(connection, message) {
   const json = { 'content-type': 'application/json; charset=utf-8' };
   if (connection.provider === 'feishu') {
-    const payload = { msg_type: 'post', content: { post: { zh_cn: { title: message.title, content: message.feishu } } } };
+    const payload = { msg_type: 'interactive', card: message.feishuCard };
     if (connection.secret) {
       payload.timestamp = String(Math.floor(Date.now() / 1000));
       payload.sign = createHmac('sha256', `${payload.timestamp}\n${connection.secret}`).digest('base64');
@@ -128,7 +171,7 @@ async function sendPush(connection, message, signal, fetchRequest = fetch) {
   const service = feishu ? '飞书' : serverChan ? 'Server酱' : 'PushPlus';
   try {
     const { endpoint, headers, body } = pushRequest(connection, message);
-    if (feishu && Buffer.byteLength(body) > 20000) {
+    if (feishu && Buffer.byteLength(body) > FEISHU_REQUEST_LIMIT) {
       return { kind: 'blocked', text: '提醒超过飞书消息大小限制，请在候羽查看当前空场。' };
     }
     const timeout = AbortSignal.timeout(12000);
