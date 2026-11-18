@@ -101,7 +101,8 @@ const mocked = app.whenReady().then(async () => {
   await campus.setProxy({ mode: 'fixed_servers', proxyRules: '127.0.0.1:1' });
 });
 
-const deadline = setTimeout(() => fail(new Error('Desktop end-to-end test timed out')), 40000);
+// Windows on Arm launches the x64 Chromium scanner under emulation for each of the 30 sleep/wake rounds.
+const deadline = setTimeout(() => fail(new Error('Desktop end-to-end test timed out')), 180000);
 function fail(error) { process.stderr.write(`${error.stack}\n`); app.exit(1); }
 
 async function run(win) {
@@ -114,7 +115,8 @@ async function run(win) {
     return js(`${target}.click()`);
   }
   async function waitFor(passes, description) {
-    for (let tries = 0; tries < 150; tries++) {
+    const until = wallClock() + 15000;
+    while (wallClock() < until) {
       const current = await state();
       if (await passes(current)) return current;
       await new Promise(resolve => setTimeout(resolve, 35));
@@ -220,10 +222,10 @@ async function run(win) {
   cases++;
 
   win.hide();
-  const rendererGone = once(win.webContents, 'render-process-gone', { signal: AbortSignal.timeout(5000) });
+  const rendererGone = once(win.webContents, 'render-process-gone', { signal: AbortSignal.timeout(15000) });
   win.webContents.forcefullyCrashRenderer();
   await rendererGone;
-  const reloaded = once(win.webContents, 'did-finish-load', { signal: AbortSignal.timeout(5000) });
+  const reloaded = once(win.webContents, 'did-finish-load', { signal: AbortSignal.timeout(15000) });
   const beforeRecovery = loads;
   wake();
   app.emit('activate');
