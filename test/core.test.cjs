@@ -6,7 +6,7 @@ const { mkdtemp, readFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { validatedSnapshot, calendarDates } = require('../src/courts.cjs');
-const { sendPush } = require('../src/push.cjs');
+const { sendPush, notice } = require('../src/push.cjs');
 const { CourtMonitor, UserError } = require('../src/monitor.cjs');
 const { Preferences } = require('../src/preferences.cjs');
 
@@ -95,6 +95,27 @@ test('PushPlus uses an HTTPS POST and treats acceptance as separate from deliver
   assert.equal((await sendPush('mock-token-not-real', { title: 'test', content: 'test' }, undefined, adapter)).kind, 'accepted');
   const rejected = async () => new Response(JSON.stringify({ code: 905 }));
   assert.equal((await sendPush('mock-token-not-real', { title: 'test', content: 'test' }, undefined, rejected)).kind, 'blocked');
+});
+
+test('ServerChan sends markdown over HTTPS and handles throttling without blind retries', async () => {
+  const key = 'SCTmock-test-token-12345';
+  const message = notice('shahe', [slot(3), slot(5)], now);
+  const adapter = async (url, request) => {
+    assert.equal(url, `https://sctapi.ftqq.com/${key}.send`);
+    assert.equal(request.method, 'POST');
+    assert.equal(request.redirect, 'error');
+    assert.equal(request.body.get('title'), '候羽｜沙河校区新增 2 场次');
+    assert.match(request.body.get('desp'), /3、5号/);
+    assert.match(request.body.get('desp'), /\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/);
+    return Response.json({ code: 0 });
+  };
+  assert.equal((await sendPush(key, message, undefined, adapter)).kind, 'accepted');
+  const limited = async () => new Response('', { status: 429 });
+  const delayed = await sendPush(key, message, undefined, limited);
+  assert.equal(delayed.kind, 'retry');
+  assert.equal(delayed.retryAfterMs, 86400000);
+  const rejected = async () => Response.json({ code: 40001 });
+  assert.equal((await sendPush(key, message, undefined, rejected)).kind, 'blocked');
 });
 
 test('an unavailable OS vault leaves the PushPlus token in memory only', async t => {

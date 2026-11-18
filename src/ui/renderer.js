@@ -164,6 +164,9 @@ function render() {
   }
 
   const pushStatus = delivery.status === 'blocked' ? '需检查配置' : delivery.configured ? '已配置' : '未配置';
+  const legacyPush = current.pushService === 'PushPlus';
+  text('push-service', legacyPush ? '当前使用 PushPlus。导入 SendKey 可切换到 Server酱。' : 'Server酱 Turbo 免费版每天可推送 5 条。');
+  text('sample-source', legacyPush ? 'PushPlus 推送加' : 'Server酱服务号');
   text('push-status', pushStatus);
   get('push-status').dataset.tone = delivery.status === 'blocked' ? 'warn' : delivery.configured ? 'good' : 'neutral';
   get('storage-note').hidden = !delivery.configured || delivery.persistent;
@@ -212,7 +215,7 @@ if (!app) {
   get('push-setup').addEventListener('click', () => act(() => app.pushSetup()));
   get('push-guide').addEventListener('click', () => act(() => app.pushGuide()));
   get('push-connect').addEventListener('click', () => runPushAction(app.connectPush));
-  get('remove-token').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('微信推送令牌已移除。'); }));
+  get('remove-token').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('微信推送密钥已移除。'); }));
   get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));

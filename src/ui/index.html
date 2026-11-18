@@ -104,34 +104,34 @@
         <div class="push-grid">
           <section class="card push-card" aria-labelledby="push-title">
             <div class="card-head">
-              <div><h2 id="push-title">接入微信</h2><p>通过「pushplus 推送加」服务号接收提醒。</p></div>
+              <div><h2 id="push-title">接入微信</h2><p id="push-service">Server酱 Turbo 免费版每天可推送 5 条。</p></div>
               <span class="status-chip" id="push-status" data-tone="neutral">未配置</span>
             </div>
             <div class="push-body">
-              <p class="push-instructions">用微信扫码登录 PushPlus，关注服务号并完成实名认证。在「一对一消息」页点击「一键复制」。</p>
+              <p class="push-instructions">用微信扫码登录 Server酱 Turbo，绑定微信服务号。在「SendKey」页复制以 SCT 开头的密钥。</p>
               <div class="push-links">
-                <button type="button" class="button" id="push-setup">打开 PushPlus ↗</button>
+                <button type="button" class="button" id="push-setup">打开 Server酱 ↗</button>
                 <button type="button" class="button primary" id="push-connect" aria-describedby="import-note">导入并测试</button>
                 <button type="button" class="quiet" id="push-guide">接入说明 ↗</button>
               </div>
-              <p id="import-note">导入时读取复制好的令牌，提交给 PushPlus 发送一条测试。受理后由系统安全存储保存。</p>
+              <p id="import-note">导入时会用复制的 SendKey 发一条测试，Server酱受理后由系统安全存储保存密钥。</p>
               <div class="push-actions" id="push-actions" hidden>
                 <button type="button" class="button" id="push-test" disabled>再次发送测试</button>
-                <button type="button" class="quiet danger" id="remove-token">移除令牌</button>
+                <button type="button" class="quiet danger" id="remove-token">移除密钥</button>
               </div>
-              <p id="storage-note" hidden>令牌仅保留到本次退出。</p>
+              <p id="storage-note" hidden>密钥仅保留到本次退出。</p>
               <p class="feedback" id="push-feedback" role="status" hidden></p>
             </div>
           </section>
           <section class="card example" aria-labelledby="example-title">
             <div class="card-head"><h2 id="example-title">消息示例</h2></div>
             <div class="message-sample">
-              <div class="message-source"><img src="icon.png" alt="" width="28" height="28"><span>PushPlus 推送加</span></div>
+              <div class="message-source"><img src="icon.png" alt="" width="28" height="28"><span id="sample-source">Server酱服务号</span></div>
               <strong>候羽｜沙河校区新增 2 场次</strong>
               <p><time datetime="11-20">11 月 20 日</time> · 18:00–19:00<br>综合馆 3、5 号 · ¥25</p>
               <span class="example-link">综合馆预约页 ↗</span>
             </div>
-            <p class="example-note">首次检查展示已有空场。之后每轮只推送新发现的场地。</p>
+            <p class="example-note">微信卡片显示标题，点开后可看场地详情和预约链接。</p>
           </section>
         </div>
       </section>

@@ -8,14 +8,14 @@ const { app, BrowserWindow, clipboard, powerMonitor, safeStorage, session } = re
 const { calendarDates } = require('../src/courts.cjs');
 
 const profile = path.resolve(process.argv.at(-1));
-const syntheticToken = 'test-houyu-local-token-01';
-const rejectedToken = 'test-houyu-local-token-02';
+const syntheticToken = 'SCTtest-houyu-local-token-01';
+const rejectedToken = 'SCTtest-houyu-local-token-02';
 const campusOrigin = 'https://cgyy.buaa.edu.cn';
 const label = [...calendarDates(Date.now()).keys()][1];
 const wallClock = Date.now;
 let testClockOffset = 0;
 Date.now = () => wallClock() + testClockOffset;
-let clipboardContent = 'A note, not a token.';
+let clipboardContent = 'test-houyu-other-token-00';
 let clipboardReads = 0;
 let rejectedTests = 0;
 let visibleCourts = [1];
@@ -36,18 +36,20 @@ clipboard.readText = async () => {
 };
 
 global.fetch = async (url, request) => {
-  assert.equal(url, 'https://www.pushplus.plus/send');
+  const destination = new URL(url);
+  assert.equal(destination.origin, 'https://sctapi.ftqq.com');
+  assert.equal(destination.search, '');
   assert.equal(request.method, 'POST');
-  const { token, title, content, channel } = JSON.parse(request.body);
-  assert.equal(channel, 'wechat');
-  if (token === rejectedToken) {
+  const title = request.body.get('title');
+  const content = request.body.get('desp');
+  if (destination.pathname === `/${rejectedToken}.send`) {
     assert.match(title, /测试提醒/);
     rejectedTests++;
-    return Response.json({ code: 903 });
+    return Response.json({ code: 40001 });
   }
-  assert.equal(token, syntheticToken);
+  assert.equal(destination.pathname, `/${syntheticToken}.send`);
   pushed.push({ title, content });
-  return Response.json({ code: 200 });
+  return Response.json({ code: 0 });
 };
 
 function venuePage() {
@@ -103,7 +105,7 @@ async function run(win) {
   const feedback = () => js("document.querySelector('#push-feedback').textContent");
   assert.equal(clipboardReads, 0, 'entering the WeChat page does not read the clipboard');
   await click('#push-connect');
-  const missing = await waitFor(async () => (await feedback()).includes('一键复制'), 'clipboard validation');
+  const missing = await waitFor(async () => (await feedback()).includes('SCT 开头'), 'clipboard validation');
   assert.equal(missing.delivery.configured, false);
   assert.equal(pushed.length, 0);
   assert.equal(clipboardReads, 1);
@@ -111,6 +113,7 @@ async function run(win) {
   await click('#push-connect');
   const connected = await waitFor(view => view.delivery.status === 'accepted', 'clipboard connection and test');
   assert.equal(connected.delivery.configured, true);
+  assert.equal(connected.pushService, 'Server酱');
   assert.equal(clipboardReads, 2);
   assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), new RegExp(syntheticToken));
   assert.match(pushed[0].title, /测试提醒/);
@@ -120,7 +123,7 @@ async function run(win) {
   testClockOffset += 16000;
   clipboardContent = rejectedToken;
   await click('#push-connect');
-  const retained = await waitFor(async () => (await feedback()).includes('令牌无效'), 'invalid replacement');
+  const retained = await waitFor(async () => (await feedback()).includes('40001'), 'invalid replacement');
   assert.equal(rejectedTests, 1);
   assert.equal(retained.delivery.configured, true);
   assert.equal(retained.delivery.status, 'accepted');

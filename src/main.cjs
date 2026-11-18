@@ -6,17 +6,19 @@ const { mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { productName, version } = require('../package.json');
 const {
-  CAMPUS_ORIGIN, LOGIN_URL, PUSH_GUIDE, PUSH_SETUP, VENUES, venueUrl, validOptions,
-  parseToken, calendarDates, beijingClock, validatedSnapshot,
+  CAMPUS_ORIGIN, LOGIN_URL, VENUES, venueUrl, validOptions,
+  calendarDates, beijingClock, validatedSnapshot,
 } = require('./courts.cjs');
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
 const { CourtMonitor, UserError } = require('./monitor.cjs');
 const { Preferences } = require('./preferences.cjs');
-const { sendPush, testNotice } = require('./push.cjs');
+const { sendPush, serverChanKey, testNotice } = require('./push.cjs');
 
 const UI = 'courtwatch://app/index.html';
 const ICON = path.join(__dirname, 'ui', 'icon.png');
 const PROFILE_IDENTITY = '北航羽毛球余场提醒';
+const PUSH_GUIDE = 'https://sct.ftqq.com/docs/getting-started/sendkey/';
+const PUSH_SETUP = 'https://sct.ftqq.com/sendkey';
 const CAMPUS_HOSTS = new Set(['cgyy.buaa.edu.cn', 'sso.buaa.edu.cn']);
 const WORLD = 1201;
 const appFiles = new Map([
@@ -108,7 +110,7 @@ function showMain() {
 }
 
 function publish(state) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('courtwatch:state', state);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('courtwatch:state', viewState(state));
   if (!tray || tray.isDestroyed()) return;
   const label = state.running ? (state.checking ? '正在查场地' : '监控中') : '监控已暂停';
   tray.setToolTip(`${productName} · ${label}`);
@@ -119,6 +121,11 @@ function publish(state) {
     { type: 'separator' },
     { label: '退出应用', click: () => app.quit() },
   ]));
+}
+
+function viewState(state) {
+  const pushService = prefs.token && !serverChanKey(prefs.token) ? 'PushPlus' : 'Server酱';
+  return { ...state, pushService };
 }
 
 async function execute(win, action, argument) {
@@ -229,10 +236,10 @@ async function storePushToken(token) {
 }
 
 async function testPushConnection(importToken) {
-  if (!importToken && !prefs.token) throw new UserError('请先导入 PushPlus 令牌。');
+  if (!importToken && !prefs.token) throw new UserError('请先导入 SendKey。');
   if (sending || changingToken) throw new UserError('通知正在处理，请稍候。');
   const now = Date.now();
-  if (now < Math.max(nextPushTestAt, monitor.pushNotBefore)) throw new UserError('请稍候再发送测试。');
+  if (now < nextPushTestAt) throw new UserError('请稍候再发送测试。');
   changingToken = true;
   try {
     let token = prefs.token;
@@ -240,18 +247,21 @@ async function testPushConnection(importToken) {
       let copied;
       try { copied = await clipboard.readText(); }
       catch { throw new UserError('候羽无法读取剪贴板。请允许粘贴后重试。'); }
-      token = parseToken(copied);
-      if (!token) throw new UserError('请在 PushPlus「一对一消息」页点「一键复制」，再导入令牌。');
+      token = serverChanKey(copied);
+      if (!token) throw new UserError('请从 Server酱 Turbo 复制以 SCT 开头的 SendKey，再导入并测试。');
+    }
+    if (now < monitor.pushNotBefore && Boolean(serverChanKey(token)) === Boolean(serverChanKey(prefs.token))) {
+      throw new UserError('推送服务暂缓接收请求，请稍后再试。');
     }
     nextPushTestAt = now + 15000;
     const result = await sendPush(token, testNotice(now));
     if (result.kind === 'retry') nextPushTestAt = Math.max(nextPushTestAt, Date.now() + result.retryAfterMs);
     if (importToken) {
-      if (result.kind === 'retry') throw new UserError('PushPlus 暂缓接收测试，请稍后重试。');
+      if (result.kind === 'retry') throw new UserError('Server酱暂缓接收测试，请稍后重试。');
       if (result.kind !== 'accepted') throw new UserError(result.text);
       if (token !== prefs.token || !prefs.encrypted) {
         try { await storePushToken(token); }
-        catch { throw new UserError('PushPlus 已受理测试，但令牌保存失败。请稍后重试。'); }
+        catch { throw new UserError('Server酱已受理测试，但密钥保存失败。请稍后重试。'); }
       }
     }
     monitor.recordDelivery(result);
@@ -271,7 +281,7 @@ function handle(action, run) {
 }
 
 function setupIpc() {
-  handle('state', () => monitor.state());
+  handle('state', () => viewState(monitor.state()));
   handle('login', () => openCampus(LOGIN_URL, true));
   handle('open-venue', id => {
     if (typeof id !== 'string' || !Object.hasOwn(VENUES, id)) throw new UserError('场馆无效。');

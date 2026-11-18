@@ -2,8 +2,6 @@
 
 const CAMPUS_ORIGIN = 'https://cgyy.buaa.edu.cn';
 const LOGIN_URL = `${CAMPUS_ORIGIN}/venue/login`;
-const PUSH_GUIDE = 'https://www.pushplus.plus/doc/function/one.html';
-const PUSH_SETUP = 'https://www.pushplus.plus/push1.html';
 const BEIJING = 'Asia/Shanghai';
 const MIN_INTERVAL = 1;
 const MAX_INTERVAL = 1440;
@@ -106,6 +104,6 @@ function groupSlots(slots) {
 }
 
 module.exports = {
-  CAMPUS_ORIGIN, LOGIN_URL, PUSH_GUIDE, PUSH_SETUP, BEIJING, CAMPUSES, VENUES, MIN_INTERVAL, MAX_INTERVAL,
+  CAMPUS_ORIGIN, LOGIN_URL, BEIJING, CAMPUSES, VENUES, MIN_INTERVAL, MAX_INTERVAL,
   venueUrl, beijingDay, beijingClock, validOptions, parseToken, calendarDates, startsAt, slotKey, validatedSnapshot, groupSlots,
 };
