@@ -21,7 +21,7 @@ const CAMPUS_HOSTS = new Set(['cgyy.buaa.edu.cn', 'sso.buaa.edu.cn']);
 const WORLD = 1201;
 const appFiles = new Map([
   ['/index.html', 'text/html; charset=utf-8'], ['/styles.css', 'text/css; charset=utf-8'],
-  ['/renderer.js', 'text/javascript; charset=utf-8'], ['/icon.png', 'image/png'], ['/court.jpg', 'image/jpeg'],
+  ['/renderer.js', 'text/javascript; charset=utf-8'], ['/icon.png', 'image/png'],
 ]);
 const webPreferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false };
 let mainWindow, campusWindow, tray, campusSession, uiSession, monitor, prefs;
@@ -305,7 +305,7 @@ async function initialize() {
 
   mainWindow = new BrowserWindow({
     width: 1130, height: 820, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
-    show: false, backgroundColor: '#f5f6f1', autoHideMenuBar: true,
+    show: false, backgroundColor: '#f3f7fc', autoHideMenuBar: true,
     webPreferences: { ...webPreferences, session: uiSession, preload: path.join(__dirname, 'preload.cjs') },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

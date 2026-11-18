@@ -122,7 +122,7 @@ async function run() {
     event.sender.send('courtwatch:state', { ...state, running: true });
     return { ok: true };
   });
-  const assets = { '/index.html': 'text/html', '/styles.css': 'text/css', '/renderer.js': 'text/javascript', '/icon.png': 'image/png', '/court.jpg': 'image/jpeg' };
+  const assets = { '/index.html': 'text/html', '/styles.css': 'text/css', '/renderer.js': 'text/javascript', '/icon.png': 'image/png' };
   session.defaultSession.protocol.handle('courtwatch', async request => {
     const item = new URL(request.url).pathname;
     if (!Object.hasOwn(assets, item)) return new Response('Not found', { status: 404 });
@@ -146,8 +146,13 @@ async function run() {
   assert.equal(await window.webContents.executeJavaScript(code), '已登录');
   const paint = () => window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   assert.equal(await window.webContents.executeJavaScript("document.title"), '候羽');
-  const photoWidth = await window.webContents.executeJavaScript("(async () => { const image = new Image(); image.src = 'court.jpg'; await image.decode(); return image.naturalWidth; })()");
-  assert.ok(photoWidth >= 1000);
+  const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
+  assert.equal(logoWidth, 512);
+  const sideBySide = () => window.webContents.executeJavaScript(`
+    document.querySelector('.settings').getBoundingClientRect().left >
+      document.querySelector('.schedule').getBoundingClientRect().left
+  `);
+  assert.equal(await sideBySide(), true, 'Monitoring settings sit beside the results at the default width');
   await paint();
   await fs.writeFile(path.join(target, 'monitor.png'), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript("document.querySelector('[data-page=wechat]').click()");
@@ -161,6 +166,7 @@ async function run() {
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');
+  assert.equal(await sideBySide(), false, 'Monitoring settings move below the results at the minimum width');
   const expiredSlotRemoved = await window.webContents.executeJavaScript(`new Promise(resolve => {
     const baseline = performance.now();
     Date.now = () => Date.parse('2026-11-18T16:59:59.800+08:00') + performance.now() - baseline;

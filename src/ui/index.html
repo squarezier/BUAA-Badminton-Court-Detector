@@ -36,12 +36,14 @@
           <button class="button primary" id="monitor-action" type="button" disabled><span class="play-icon" aria-hidden="true"></span><span id="monitor-action-label">开始监控</span></button>
         </header>
 
-        <section class="monitor-band" aria-label="监控状态">
-          <div class="band-title">
+        <section class="card monitor-summary" aria-labelledby="selected-campus">
+          <header class="monitor-band">
+            <div class="band-title">
+              <h2 id="selected-campus">沙河校区</h2>
+              <p id="selected-venues">综合馆 · 每 2 分钟检查</p>
+            </div>
             <div class="monitor-state" id="monitor-state" data-tone="neutral" role="status"><i class="dot"></i><span id="monitor-state-label">等待登录</span></div>
-            <h2 id="selected-campus">沙河校区</h2>
-            <p id="selected-venues">综合馆 · 每 2 分钟检查</p>
-          </div>
+          </header>
           <dl class="metrics">
             <div><dt>可约场次</dt><dd id="count">—</dd></div>
             <div><dt>上次检查</dt><dd id="checked">—</dd></div>
@@ -49,47 +51,52 @@
           </dl>
         </section>
 
-        <section class="card settings" aria-label="监控设置">
-          <fieldset id="campus-field">
-            <legend>监控校区</legend>
-            <div class="campus-options">
-              <label class="choice">
-                <input type="radio" name="campus" value="shahe" checked>
-                <span><strong>沙河</strong><small>综合馆</small></span>
-              </label>
-              <label class="choice">
-                <input type="radio" name="campus" value="xueyuanlu">
-                <span><strong>学院路</strong><small>主馆、训练馆</small></span>
-              </label>
+        <div class="monitor-grid">
+          <section class="card schedule" aria-labelledby="schedule-title">
+            <div class="card-head">
+              <div><h2 id="schedule-title"><span id="schedule-title-label">当前空场</span></h2><p id="scope">仅统计官网的绿色可约格</p></div>
+              <button class="quiet" type="button" id="open-booking">打开官方预约页 <span aria-hidden="true">↗</span></button>
             </div>
-          </fieldset>
-          <div class="interval-control">
-            <form id="interval-form">
-              <label for="interval">检查频率</label>
-              <div class="interval-entry"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required aria-describedby="options-note"><button class="button interval-save" type="submit" id="save-interval">保存</button></div>
-            </form>
-            <p id="options-note">每 1–1440 分钟检查一次</p>
-          </div>
-        </section>
+            <div id="read-error" class="warning" role="status" hidden></div>
+            <div id="empty" class="empty">
+              <div class="empty-glyph court-icon" aria-hidden="true"></div>
+              <strong id="empty-title">登录后可查看余量</strong>
+              <p id="empty-note">启动监控后，官网标绿且尚未开始的空场会显示在这里。</p>
+            </div>
+            <div class="table-wrap" id="table-wrap" hidden>
+              <table>
+                <thead><tr><th scope="col">日期</th><th scope="col">时段</th><th scope="col">场馆</th><th scope="col">场号</th><th scope="col">价格</th></tr></thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+          </section>
 
-        <section class="card schedule" aria-labelledby="schedule-title">
-          <div class="card-head">
-            <div><h2 id="schedule-title"><i class="schedule-dot" aria-hidden="true"></i><span id="schedule-title-label">当前空场</span></h2><p id="scope">仅统计官网的绿色可约格</p></div>
-            <button class="quiet" type="button" id="open-booking">打开官方预约页 <span aria-hidden="true">↗</span></button>
-          </div>
-          <div id="read-error" class="warning" role="status" hidden></div>
-          <div id="empty" class="empty">
-            <div class="empty-glyph court-icon" aria-hidden="true"></div>
-            <strong id="empty-title">登录后可查看余量</strong>
-            <p id="empty-note">启动监控后，官网标绿且尚未开始的空场会显示在这里。</p>
-          </div>
-          <div class="table-wrap" id="table-wrap" hidden>
-            <table>
-              <thead><tr><th scope="col">日期</th><th scope="col">时段</th><th scope="col">场馆</th><th scope="col">场号</th><th scope="col">价格</th></tr></thead>
-              <tbody id="rows"></tbody>
-            </table>
-          </div>
-        </section>
+          <section class="card settings" aria-labelledby="settings-title">
+            <div class="card-head"><h2 id="settings-title">监控设置</h2></div>
+            <div class="settings-body">
+              <fieldset id="campus-field">
+                <legend>监控校区</legend>
+                <div class="campus-options">
+                  <label class="choice">
+                    <input type="radio" name="campus" value="shahe" checked>
+                    <span><strong>沙河</strong><small>综合馆</small></span>
+                  </label>
+                  <label class="choice">
+                    <input type="radio" name="campus" value="xueyuanlu">
+                    <span><strong>学院路</strong><small>主馆、训练馆</small></span>
+                  </label>
+                </div>
+              </fieldset>
+              <div class="interval-control">
+                <form id="interval-form">
+                  <label for="interval">检查频率</label>
+                  <div class="interval-entry"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required aria-describedby="options-note"><button class="button interval-save" type="submit" id="save-interval">保存</button></div>
+                </form>
+                <p id="options-note">每 1–1440 分钟检查一次</p>
+              </div>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section id="page-wechat" aria-labelledby="wechat-title" hidden>

@@ -57,12 +57,4 @@ python3 scripts/package.py win32-x64 ./runtime ./staging ./Houyu-Windows-x64.zip
 
 ## 界面素材
 
-羽球标志由 `scripts/icon.py` 渲染。监控页的球场主图由内置 ImageGen 生成，导出为 `src/ui/court.jpg` 随应用分发。
-
-```text
-Use case: photorealistic-natural
-Asset type: ambient photograph for the right side of a badminton court availability desktop dashboard, wide landscape.
-Primary request: one real white goose-feather badminton shuttlecock resting diagonally on a deep pine-green indoor badminton court. Single subtle off-white court line, textured matte vinyl, close low camera angle, precise and elegant sports editorial photograph.
-Composition: the shuttlecock is in the right-center of the image and fully visible across a shallow wide center crop. Keep the left half darker with very simple green surface so dashboard text can sit comfortably over the left side. No people, racket, net or clutter.
-Lighting and palette: feather texture highlighted by a soft beam, rich understated forest and teal green, gentle shadows, natural warm ivory. Minimal, premium, calm. No text, no branding, no watermark, no UI.
-```
+界面主色为北航蓝（`#005BAC`）。羽球与球场边线组成的候羽图标由 `scripts/icon.py` 渲染。[北航色彩规范](https://xcb.buaa.edu.cn/info/1091/2057.htm)

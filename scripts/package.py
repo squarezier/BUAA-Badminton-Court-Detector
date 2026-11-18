@@ -78,7 +78,7 @@ def mac_package(runtime, stage, output):
     folder = stage / PRODUCT
     folder.mkdir()
     bundle.rename(folder / bundle.name)
-    shutil.copy(ROOT / 'README.md', folder / '使用说明.md')
+    shutil.copy(ROOT / 'docs' / 'guide.md', folder / '使用说明.md')
     run('ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', folder, output)
 
 
@@ -93,7 +93,7 @@ def windows_package(runtime, stage, output):
     run('node', ROOT / 'scripts' / 'windows-brand.mjs', runtime_executable, folder / 'Houyu.exe', icon)
     runtime_executable.unlink()
     stage_app(folder / 'resources')
-    shutil.copy(ROOT / 'README.md', folder / '使用说明.md')
+    shutil.copy(ROOT / 'docs' / 'guide.md', folder / '使用说明.md')
     with ZipFile(output, 'w', ZIP_DEFLATED, compresslevel=4) as archive:
         for file in sorted(folder.rglob('*')):
             if file.is_file():

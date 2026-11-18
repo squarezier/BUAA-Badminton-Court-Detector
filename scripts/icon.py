@@ -33,12 +33,17 @@ def opacity(distance, px):
     return max(0, min(255, round(255 * (0.5 - distance / px))))
 
 
-FEATHERS = (
-    ((-130, -112), (-121, -134), (-98, -146), (-64, -127), (-23, 41), (-47, 42)),
-    ((-47, -145), (-25, -167), (23, -167), (47, -145), (12, 41), (-12, 41)),
-    ((130, -112), (121, -134), (98, -146), (64, -127), (23, 41), (47, 42)),
+SKIRT = (
+    (-115, -108), (-106, -123), (-65, -136), (-44, -37), (-26, -37),
+    (-42, -146), (-28, -156), (28, -156), (42, -146),
+    (26, -37), (44, -37), (65, -136), (106, -123), (115, -108),
+    (50, 48), (-50, 48),
 )
-ANGLE = math.radians(36)
+COURT_LINES = (
+    (82, 86, 162, 104), (82, 86, 100, 168),
+    (350, 408, 430, 426), (412, 344, 430, 426),
+)
+ANGLE = math.radians(17)
 COS, SIN = math.cos(ANGLE), math.sin(ANGLE)
 
 
@@ -59,13 +64,13 @@ def polygon_distance(x, y, points):
 
 
 def mark(x, y, px):
-    x, y = x - 255, y - 271
+    x, y = x - 256, y - 259
     u, v = COS * x + SIN * y, -SIN * x + COS * y
-    if abs(u) > 130 + px or v < -167 - px or v > 140 + px:
-        return (0, 0, 0, 0)
-    wings = tuple(opacity(polygon_distance(u, v, points), px) for points in FEATHERS)
-    cork = opacity(rounded_distance(u, v, -44, 57, 44, 140, 33), px)
-    return (*wings, cork)
+    if abs(u) > 115 + px or v < -156 - px or v > 133 + px:
+        return (0, 0)
+    feathers = min(polygon_distance(u, v, SKIRT), rounded_distance(u, v, -52, 33, 52, 59, 10))
+    cork = rounded_distance(u, v, -43, 73, 43, 133, 29)
+    return opacity(feathers, px), opacity(cork, px)
 
 
 def blend(a, b, amount):
@@ -73,15 +78,18 @@ def blend(a, b, amount):
 
 
 def icon(x, y, px):
-    alpha = opacity(rounded_distance(x, y, 12, 12, 500, 500, 116), px)
-    color = blend((39, 125, 88), (16, 57, 46), (x + y) / 1024)
-    for pigment, coverage in zip(((218, 250, 229), (255, 255, 243), (190, 240, 203), (216, 246, 138)), mark(x, y, px)):
-        color = blend(color, pigment, coverage / 255)
+    alpha = opacity(rounded_distance(x, y, 12, 12, 500, 500, 114), px)
+    court = min(rounded_distance(x, y, *bounds, 9) for bounds in COURT_LINES)
+    color = blend((0, 91, 172), (152, 205, 250), opacity(court, px) / 255)
+    feathers, cork = mark(x, y, px)
+    color = blend(color, (255, 255, 255), feathers / 255)
+    color = blend(color, (217, 238, 255), cork / 255)
     return (*color, alpha)
 
 
 def tray(x, y, px):
-    alpha = max(mark((x - 256) * 0.73 + 256, (y - 256) * 0.73 + 256, px * 0.73))
+    scale = 0.68
+    alpha = max(mark((x - 256) * scale + 256, (y - 256) * scale + 256, px * scale))
     return (0, 0, 0, alpha)
 
 
