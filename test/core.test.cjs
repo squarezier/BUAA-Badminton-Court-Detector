@@ -267,7 +267,7 @@ test('a Feishu connection is sealed and survives reload', async t => {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'settings.json');
   const connection = feishuConnection({ webhook, secret: 'synthetic-signing-key' });
-  const ciphertext = Buffer.from('sealed-by-test-vault');
+  const ciphertext = Buffer.from('v11sealed-by-test-vault');
   let plaintext;
   const vault = {
     async isAsyncEncryptionAvailable() { return true; },
@@ -300,4 +300,18 @@ test('an unavailable OS vault leaves a new connection in memory only', async t =
   const reopened = new Preferences(file, { async isAsyncEncryptionAvailable() { return false; } });
   await reopened.load();
   assert.equal(reopened.connection, null);
+});
+
+test('Linux persists connections only with the OS Secret Service or Secret portal provider', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'houyu-linux-vault-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const tag of ['v10', '???', 'v11', 'v12']) {
+    const file = join(directory, tag === '???' ? 'unknown' : tag);
+    const bytes = Buffer.from(tag + 'test-ciphertext');
+    const vault = { async isAsyncEncryptionAvailable() { return true; }, async encryptStringAsync() { return bytes; } };
+    const prefs = new Preferences(file, vault, 'linux');
+    const secure = tag === 'v11' || tag === 'v12';
+    assert.equal(await prefs.saveConnection(feishuConnection({ webhook })), secure);
+    assert.equal(JSON.parse(await readFile(file, 'utf8')).encryptedToken, secure ? bytes.toString('base64') : null);
+  }
 });

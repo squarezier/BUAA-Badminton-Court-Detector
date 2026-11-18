@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, nativeTheme, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
 const path = require('node:path');
@@ -36,6 +36,7 @@ const nextPushTestAt = new Map();
 // Electron uses its internal app name for the macOS Keychain service.
 // Keep that identity and the profile path for settings saved by older releases.
 app.setName(PROFILE_IDENTITY);
+if (process.platform === 'linux') app.setDesktopName('houyu.desktop');
 const devProfile = !app.isPackaged && process.env.COURTWATCH_DEV_PROFILE;
 const profile = devProfile ? path.resolve(devProfile) : path.join(app.getPath('appData'), PROFILE_IDENTITY);
 mkdirSync(profile, { recursive: true, mode: 0o700 });
@@ -391,16 +392,24 @@ async function initialize() {
   monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted), prefs.warning);
   setupIpc();
 
+  const windowColors = () => nativeTheme.shouldUseDarkColors
+    ? { color: '#262b2d', symbolColor: '#e5e5dc' }
+    : { color: '#f9f7f2', symbolColor: '#445461' };
   const nativeTitleBar = process.platform === 'darwin'
     ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 17, y: 13 } }
     : process.platform === 'win32'
-      ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#f9f7f2', symbolColor: '#445461', height: 36 } }
+      ? { titleBarStyle: 'hidden', titleBarOverlay: { ...windowColors(), height: 36 } }
       : {};
   mainWindow = new BrowserWindow({
     ...nativeTitleBar,
     width: 1130, height: 820, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
-    show: false, backgroundColor: '#f9f7f2', autoHideMenuBar: true,
+    show: false, backgroundColor: windowColors().color, autoHideMenuBar: true,
     webPreferences: { ...webPreferences, session: uiSession, preload: path.join(__dirname, 'preload.cjs') },
+  });
+  nativeTheme.on('updated', () => {
+    if (mainWindow.isDestroyed()) return;
+    mainWindow.setBackgroundColor(windowColors().color);
+    if (process.platform === 'win32') mainWindow.setTitleBarOverlay({ ...windowColors(), height: 36 });
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
@@ -415,13 +424,20 @@ async function initialize() {
   const trayPath = process.platform === 'darwin' ? path.join(__dirname, 'ui', 'trayTemplate.png') : ICON;
   const trayImage = nativeImage.createFromPath(trayPath).resize({ width: 18, height: 18 });
   if (process.platform === 'darwin') trayImage.setTemplateImage(true);
-  tray = new Tray(trayImage);
-  tray.on('click', showMain);
+  try {
+    tray = new Tray(trayImage);
+    tray.on('click', showMain);
+  } catch (error) {
+    if (process.platform !== 'linux') throw error;
+  }
   if (process.platform === 'darwin') app.setAboutPanelOptions({ applicationName: productName, applicationVersion: version });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ label: productName, submenu: [
       { label: `关于${productName}`, role: 'about' }, { type: 'separator' },
       { label: `隐藏${productName}`, role: 'hide' }, { label: `退出${productName}`, role: 'quit' },
+    ] }] : []),
+    ...(process.platform === 'linux' ? [{ label: productName, submenu: [
+      { label: '显示窗口', click: showMain }, { label: '退出候羽', role: 'quit', accelerator: 'Ctrl+Q' },
     ] }] : []),
     { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
   ]));

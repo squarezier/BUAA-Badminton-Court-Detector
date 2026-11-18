@@ -2,15 +2,16 @@
 <h1 align="center">候羽</h1>
 <p align="center">BUAA Badminton Court Detector · 北航羽毛球退订提醒</p>
 
-## 下载 v1.6.1
+## 下载 v1.7.0
 
 | 你的电脑 | 安装包 |
 | --- | --- |
-| Mac · Apple 芯片（M 系列） | [下载 macOS arm64 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-macOS-arm64.zip) |
-| Mac · Intel 芯片 | [下载 macOS Intel 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-macOS-x64.zip) |
-| Windows 10 / 11 · x64 | [下载 Windows 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-Windows-x64.zip) |
+| Mac · Apple 芯片（M 系列） | [下载 macOS arm64 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-macOS-arm64.zip) |
+| Mac · Intel 芯片 | [下载 macOS Intel 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-macOS-x64.zip) |
+| Windows 10 / 11 · x64 | [下载 Windows 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-Windows-x64.zip) |
+| Ubuntu 22.04 / 24.04 · x86_64 | [下载 Linux DEB 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-Linux-amd64.deb) |
 
-完整解压后，在 macOS 13 或更新版本打开「候羽」，在 Windows 打开 `Houyu.exe`。[打开应用](docs/guide.md#打开应用) · [源码](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-Source.zip) · [SHA-256 校验](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-SHA256SUMS.txt) · [版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v1.6.1)
+完整解压后，在 macOS 13 或更新版本打开「候羽」，在 Windows 打开 `Houyu.exe`。Linux 在下载目录运行 `sudo apt install ./Houyu-Linux-amd64.deb`，然后在应用菜单打开「候羽」。[打开应用](docs/guide.md#打开应用) · [源码](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-Source.zip) · [SHA-256 校验](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.7.0/Houyu-SHA256SUMS.txt) · [版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v1.7.0)
 
 ## 使用手册
 
@@ -24,7 +25,10 @@
 
 点左下角 **登录北航**，在学校官网完成认证。选择校区，按需修改并保存检查间隔，点 **开始监控**。下图是运行后的示例，绿色数字是可约场号，点场馆名即可打开对应的官网预约页。
 
-<img src="docs/monitor.png" width="940" alt="学院路空场表，同一天的主馆与训练馆分别列出时段、可约场号和价格">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/monitor-dark.png">
+  <img src="docs/monitor.png" width="940" alt="学院路空场表，主馆和训练馆按日期、时段、场号与价格排列">
+</picture>
 
 ### 3. 只等想打的时段（可选）
 

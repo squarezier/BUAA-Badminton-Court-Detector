@@ -6,6 +6,7 @@
 
 - macOS 13 或更新版本可用。Apple 芯片 Mac 使用 `macOS-arm64` 包，Intel Mac 使用 `macOS-x64` 包。解压后打开「候羽」。
 - Windows 10/11 的 x64 电脑使用 `Windows-x64` 包。完整解压后打开 `Houyu` 文件夹中的 `Houyu.exe`。
+- Linux 桌面版面向 Ubuntu 22.04 / 24.04 的 x86_64（amd64）。在下载目录运行 `sudo apt install ./Houyu-Linux-amd64.deb`，然后从应用菜单打开「候羽」。从终端可运行 `houyu`。GNOME 桌面隐藏托盘时，再次从应用菜单打开即可回到窗口，Ctrl+Q 可退出。
 - 从旧版升级时，先从菜单栏或托盘退出旧版。候羽会使用同一系统用户下已有的监控设置和安全存储。
 - 这些是本地构建的分发包。Mac 包使用临时签名，正式分发需要 Developer ID 签名和公证。Windows 包未做应用发布者签名。macOS 和 Windows 可能提示校验发布者。
 
@@ -15,7 +16,7 @@
 2. 在飞书桌面端打开目标群。进入「群设置 → 群机器人 → 添加机器人」，选择「自定义机器人」并复制 Webhook。可开启「签名校验」并复制飞书生成的密钥。如果群机器人启用了自定义关键词，可将「候羽」加入关键词。[飞书自定义机器人指南](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN)
 3. 在候羽的「飞书通知」粘贴 Webhook 和可选的签名密钥，点「连接并测试」。在目标群查看「候羽｜测试提醒」。连接后可点「发送测试」验证送达，或点「更换机器人」更换群。从旧版升级时，原有的通知渠道在飞书测试受理后切换。
 4. 回到「场地监控」，选校区，在「检查间隔」输入 1–1440 分钟的整数并保存，再点「开始监控」。监控运行中可以调整频率，正在查询的一轮会完整结束。首次查询建立已预约场次的基准。同一空场连续可约时只提醒一次。
-5. 关闭窗口后，应用保留在 macOS 菜单栏或 Windows 托盘。电脑需要保持唤醒且联网。休眠时暂停，唤醒后补查。登录过期后需重新登录并开始监控。
+5. 关闭窗口后，应用保留在 macOS 菜单栏或 Windows、Linux 托盘。电脑需要保持唤醒且联网。休眠时暂停，唤醒后补查。登录过期后需重新登录并开始监控。
 
 ## 只等某天的退订
 
@@ -38,7 +39,7 @@
 ## 本地数据
 
 - 学号和密码在官方认证页面输入。该窗口使用独立沙箱与内存会话。退出应用会结束该会话。
-- 应用使用系统钥匙串或 Windows 安全存储加密 Webhook 与签名密钥。系统安全存储不可用时，新连接可在内存中使用至本次退出。已有的加密配置需要等系统安全存储恢复后才可更换。
+- Webhook 和签名密钥由 macOS 钥匙串、Windows DPAPI 或 Linux 密钥环加密。Linux 接受 Secret Service 及 Secret 门户提供的加密，缺少可用密钥环时仅限本次运行。系统安全存储不可用时，新连接可在内存中使用至本次退出。已有的加密配置需要等系统安全存储恢复后才可更换。
 - 飞书提醒通过 HTTPS 发送至配置对应的群。候羽在本机生成签名，群消息正文只含场地信息。点击「断开连接」可移除本机保存的推送配置，包括暂时无法解密的配置。
 
 ## 运行和构建源码
@@ -60,11 +61,12 @@ npx electron test/desktop-smoke.cjs ./qa/preview
 
 项目使用 Electron 45.3.4。安装和构建所需的 Electron 来自其官方发布。[Electron 发行说明](https://releases.electronjs.org/release/v45.3.4)
 
-`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出 ZIP 路径。运行时目录应包含对应 Electron ZIP 与官方 `SHASUMS256.txt`。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。
+`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出 ZIP 路径。运行时目录应包含对应 Electron ZIP 与官方 `SHASUMS256.txt`。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。Linux DEB 在 Ubuntu 上用 `unzip` 与 `dpkg-deb` 构建，安装时使用官方 Chromium 沙箱。
 
 ```sh
 python3 scripts/package.py darwin-arm64 ./runtime ./staging ./Houyu-macOS-arm64.zip
 python3 scripts/package.py win32-x64 ./runtime ./staging ./Houyu-Windows-x64.zip
+python3 scripts/package.py linux-x64 ./runtime ./staging ./Houyu-Linux-amd64.deb
 ```
 
 ## 界面素材

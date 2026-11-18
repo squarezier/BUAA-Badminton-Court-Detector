@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=候羽
+Name[en]=Houyu
+GenericName=北航羽毛球退订提醒
+Exec=/opt/houyu/houyu
+Icon=houyu
+Terminal=false
+Categories=Utility;
+StartupNotify=true

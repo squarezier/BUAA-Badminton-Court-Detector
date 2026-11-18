@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / 'package.json').read_text())
 RELEASE = MANIFEST['devDependencies']['electron']
 PRODUCT = MANIFEST['productName']
-TARGETS = ('darwin-arm64', 'darwin-x64', 'win32-x64')
+TARGETS = ('darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64')
 
 
 def run(*args):
@@ -105,6 +105,36 @@ def windows_package(runtime, stage, output):
                 archive.write(file, file.relative_to(stage))
 
 
+def linux_package(runtime, stage, output):
+    root = stage / 'package'
+    app_dir = root / 'opt/houyu'
+    app_dir.mkdir(parents=True)
+    run('unzip', '-q', runtime, '-d', app_dir)
+    (app_dir / 'electron').rename(app_dir / 'houyu')
+    (app_dir / 'houyu').chmod(0o755)
+    # The distribution owns the upstream Chromium sandbox helper as root.
+    (app_dir / 'chrome-sandbox').chmod(0o4755)
+    stage_app(app_dir / 'resources')
+
+    binary = root / 'usr/bin/houyu'
+    binary.parent.mkdir(parents=True)
+    binary.symlink_to('/opt/houyu/houyu')
+    desktop = root / 'usr/share/applications/houyu.desktop'
+    desktop.parent.mkdir(parents=True)
+    shutil.copy(ROOT / 'scripts/linux/houyu.desktop', desktop)
+    icon = root / 'usr/share/icons/hicolor/512x512/apps/houyu.png'
+    icon.parent.mkdir(parents=True)
+    shutil.copy(ROOT / 'src/ui/icon.png', icon)
+    guide = root / 'usr/share/doc/houyu'
+    guide.mkdir(parents=True)
+    copy_guide(guide)
+    control = root / 'DEBIAN/control'
+    control.parent.mkdir()
+    template = (ROOT / 'scripts/linux/control.in').read_text()
+    control.write_text(template.replace('@VERSION@', MANIFEST['version']))
+    run('dpkg-deb', '--root-owner-group', '-Zxz', '-z4', '--build', root, output)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', choices=TARGETS)
@@ -119,8 +149,10 @@ def main():
         stage = Path(directory)
         if args.target.startswith('darwin'):
             mac_package(runtime, stage, output)
-        else:
+        elif args.target == 'win32-x64':
             windows_package(runtime, stage, output)
+        else:
+            linux_package(runtime, stage, output)
 
 
 if __name__ == '__main__':

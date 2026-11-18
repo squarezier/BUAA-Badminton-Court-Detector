@@ -118,6 +118,8 @@ function renderTarget(options, venues, now) {
     get('target-start').value = target?.start ?? '18:00';
     get('target-end').value = target?.end ?? '20:00';
     get('target-error').hidden = true;
+    get('target-date').removeAttribute('aria-invalid');
+    get('target-end').removeAttribute('aria-invalid');
   }
   editorDay = today;
   for (const control of get('target-form').elements) control.disabled = busy;
@@ -126,16 +128,37 @@ function renderTarget(options, venues, now) {
   return endsAt > now ? Math.min(endsAt, nextMidnight) : nextMidnight;
 }
 
+function validateTargetRange(focus = false) {
+  const date = get('target-date');
+  const start = get('target-start');
+  const end = get('target-end');
+  const error = get('target-error');
+  let field;
+  let message = '';
+  if (date.value && date.value < date.min) {
+    field = date;
+    message = '请选择今天或以后的日期。';
+  } else if (start.value && end.value && start.value >= end.value) {
+    field = end;
+    message = '结束时间需要晚于开始时间。';
+  } else if (Date.parse(`${date.value}T${end.value}:00+08:00`) <= Date.now()) {
+    field = end;
+    message = '请选择尚未结束的北京时间段。';
+  }
+  for (const input of [date, end]) input.setAttribute('aria-invalid', String(input === field));
+  text('target-error', message);
+  error.hidden = !message;
+  if (focus && field) field.focus();
+  return !field;
+}
+
 function submitTarget(event) {
   event.preventDefault();
-  if (!current) return;
+  if (!current || !validateTargetRange(true)) return;
   const date = get('target-date').value;
   const start = get('target-start').value;
   const end = get('target-end').value;
   const error = get('target-error');
-  const showError = message => { error.textContent = message; error.hidden = false; };
-  if (start >= end) { showError('结束时间需要晚于开始时间。'); get('target-end').focus(); return; }
-  if (Date.parse(`${date}T${end}:00+08:00`) <= Date.now()) { showError('请选择尚未结束的北京时间段。'); return; }
   const campus = current.options.campus;
   const target = { date, start, end };
   void act(async () => {
@@ -143,7 +166,7 @@ function submitTarget(event) {
       await app.saveTarget(campus, target);
       error.hidden = true;
       showToast('提醒目标已保存。');
-    } catch (err) { showError(err.message || '目标保存失败，请重试。'); }
+    } catch (err) { text('target-error', err.message || '目标保存失败，请重试。'); error.hidden = false; }
   });
 }
 
@@ -174,7 +197,9 @@ function renderTable(rows, venues) {
   if (fingerprint === renderedRows) return;
   renderedRows = fingerprint;
   const body = get('rows');
+  const focusedSlot = body.contains(document.activeElement) ? document.activeElement.dataset.slot : null;
   body.replaceChildren();
+  let restoreFocus;
   let dateCell;
   for (const slot of rows) {
     const row = body.insertRow();
@@ -200,6 +225,8 @@ function renderTable(rows, venues) {
     link.type = 'button';
     link.className = 'quiet venue-link';
     link.dataset.venue = slot.venue;
+    link.dataset.slot = JSON.stringify([slot.date, slot.start, slot.end, slot.venue, slot.price]);
+    if (focusedSlot === link.dataset.slot) restoreFocus = link;
     link.textContent = venue ? venueName(venue) : '预约页';
     link.setAttribute('aria-label', `打开${venue?.label ?? '场馆'}官方预约页`);
     link.addEventListener('click', () => act(() => app.openVenue(slot.venue)));
@@ -219,6 +246,7 @@ function renderTable(rows, venues) {
     const columns = ['time', 'venue', 'courts', 'price'];
     row.querySelectorAll('td').forEach((cell, index) => cell.headers = `${dateCell.id} col-${columns[index]}`);
   }
+  if (focusedSlot) (restoreFocus ?? get('schedule-title-label')).focus({ preventScroll: true });
 }
 
 function render() {
@@ -255,6 +283,7 @@ function render() {
     else if (errors.length && !checking) { status = '下轮重试'; tone = 'warn'; }
   }
   text('monitor-state-label', status);
+  text('monitor-context', anyResult && !checking ? `，${campusNames[options.campus]}可约 ${slotCount} 场次` : '');
   get('monitor-state').dataset.tone = tone;
   text('selected-campus', campusNames[options.campus]);
   text('selected-venues', venues.map(venueName).join(' · '));
@@ -279,9 +308,9 @@ function render() {
   text('scope', range);
   get('read-error').hidden = !errors.length;
   text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error}`).join('\n'));
+  renderTable(rows, venues);
   get('empty').hidden = rows.length > 0;
   get('table-wrap').hidden = rows.length === 0;
-  renderTable(rows, venues);
   if (!rows.length) {
     let title = '登录北航后可查看场地';
     let note = '';
@@ -339,7 +368,13 @@ if (!app) {
   get('account-action').addEventListener('click', () => act(() => current?.auth === 'signed-in' ? app.logOut() : app.login()));
   get('monitor-action').addEventListener('click', () => act(() => current?.running ? app.pause() : app.start()));
   get('open-target').addEventListener('click', () => showPage('target'));
-  get('target-form').addEventListener('input', () => { targetDirty = true; get('target-error').hidden = true; });
+  get('target-form').addEventListener('input', () => {
+    targetDirty = true;
+    if (!get('target-error').hidden) validateTargetRange();
+  });
+  get('target-form').addEventListener('focusout', event => {
+    if (targetDirty && !busy && event.target.matches('input')) validateTargetRange();
+  });
   get('target-form').addEventListener('submit', submitTarget);
   get('clear-target').addEventListener('click', () => act(async () => {
     await app.saveTarget(current.options.campus, null);

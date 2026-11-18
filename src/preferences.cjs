@@ -9,7 +9,8 @@ const { decodePushConnection, encodePushConnection } = require('./push-connectio
 const defaultOptions = { campus: 'shahe', interval: 2 };
 
 class Preferences {
-  constructor(file, storage) {
+  constructor(file, storage, platform = process.platform) {
+    this.platform = platform;
     this.file = file;
     this.storage = storage;
     this.options = { ...defaultOptions, targets: {} };
@@ -17,6 +18,20 @@ class Preferences {
     this.encrypted = null;
     this.warning = '';
     this.writing = Promise.resolve();
+  }
+
+  verifiedCiphertext(bytes) {
+    // In the pinned Chromium runtime v11 identifies Secret Service and v12 the Secret portal.
+    // An unavailable Linux keyring can otherwise select a shared fallback key.
+    if (this.platform === 'linux' && !['v11', 'v12'].includes(bytes.toString('ascii', 0, 3))) {
+      throw new Error('No supported Linux secret provider');
+    }
+    return bytes;
+  }
+
+  async seal(connection) {
+    const bytes = await this.storage.encryptStringAsync(encodePushConnection(connection));
+    return this.verifiedCiphertext(bytes).toString('base64');
   }
 
   async load() {
@@ -49,7 +64,7 @@ class Preferences {
     let plain;
     try {
       if (!await this.storage.isAsyncEncryptionAvailable()) throw new Error('OS encryption unavailable');
-      plain = await this.storage.decryptStringAsync(Buffer.from(this.encrypted, 'base64'));
+      plain = await this.storage.decryptStringAsync(this.verifiedCiphertext(Buffer.from(this.encrypted, 'base64')));
       this.connection = decodePushConnection(plain.result);
       if (!this.connection) throw new Error('Invalid stored notification connection');
     } catch {
@@ -59,7 +74,7 @@ class Preferences {
     }
     if (plain.shouldReEncrypt) {
       try {
-        const renewed = (await this.storage.encryptStringAsync(encodePushConnection(this.connection))).toString('base64');
+        const renewed = await this.seal(this.connection);
         await this.persist(this.options, renewed);
         this.encrypted = renewed;
       } catch {
@@ -87,7 +102,7 @@ class Preferences {
       if (connection) {
         try {
           if (await this.storage.isAsyncEncryptionAvailable()) {
-            encrypted = (await this.storage.encryptStringAsync(encodePushConnection(connection))).toString('base64');
+            encrypted = await this.seal(connection);
           }
         } catch {
           // A new connection can be used for this session if the vault is unavailable.

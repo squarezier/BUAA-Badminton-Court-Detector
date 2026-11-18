@@ -10,8 +10,8 @@ const { beijingDay, calendarDates } = require('../src/courts.cjs');
 
 const profile = path.resolve(process.argv.at(-1));
 const legacyToken = 'SCTtest-houyu-local-token-01';
-const legacyCiphertext = Buffer.from('legacy-test-connection');
-const feishuCiphertext = Buffer.from('feishu-test-connection');
+const legacyCiphertext = Buffer.from('v11legacy-test-connection');
+const feishuCiphertext = Buffer.from('v11feishu-test-connection');
 const webhook = 'https://open.feishu.cn/open-apis/bot/v2/hook/11111111-2222-4333-8444-555555555555';
 const secret = 'synthetic-feishu-signing-key';
 const campusOrigin = 'https://cgyy.buaa.edu.cn';
@@ -127,7 +127,8 @@ async function run(win) {
 
   assert.equal(await js("getComputedStyle(document.querySelector('.window-bar')).getPropertyValue('app-region')"), 'drag');
   assert.equal(await js("document.querySelector('.window-bar').getBoundingClientRect().bottom <= document.querySelector('#monitor-action').getBoundingClientRect().top"), true);
-  assert.ok(win.isMinimizable() && win.isMaximizable() && win.isClosable());
+  assert.ok(win.isResizable());
+  if (process.platform !== 'linux') assert.ok(win.isMinimizable() && win.isMaximizable() && win.isClosable());
   if (process.platform === 'darwin') assert.deepEqual(win.getWindowButtonPosition(), { x: 17, y: 13 });
   if (process.platform === 'win32') {
     await waitFor(() => js("navigator.windowControlsOverlay?.visible && navigator.windowControlsOverlay.getTitlebarAreaRect().width < innerWidth"), 'native Windows system buttons occupy the titlebar overlay');
@@ -290,6 +291,7 @@ async function run(win) {
     document.querySelector('#target-form').requestSubmit();
   `);
   assert.match(await js("document.querySelector('#target-error').innerText"), /晚于开始/);
+  assert.equal(await js("document.activeElement.id === 'target-end' && document.activeElement.getAttribute('aria-invalid') === 'true'"), true);
   assert.deepEqual((await state()).options.targets, {});
   await js(`document.querySelector('#target-start').value = '07:00';
     document.querySelector('#target-end').value = '08:00'`);

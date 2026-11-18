@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, protocol, session } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, protocol, session } = require('electron');
 const { readBookingPage, signedInOnBookingSite } = require('../src/site-page.cjs');
 const { beijingClock, calendarDates } = require('../src/courts.cjs');
 
@@ -104,6 +104,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
 }
 
 async function run() {
+  nativeTheme.themeSource = 'light';
   const source = path.join(__dirname, '..', 'src');
   const preferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false };
   const page = new BrowserWindow({ show: false, webPreferences: preferences });
@@ -223,7 +224,7 @@ async function run() {
   assert.equal(await js('document.title'), '候羽');
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell')].map(cell => cell.rowSpan)"), [1, 1, 3]);
   assert.deepEqual(await js("[...document.querySelectorAll('#booking-links button')].map(el => el.textContent)"), ['主馆预约 ↗', '训练馆预约 ↗']);
-  const readable = await js(`(() => {
+  const readable = () => js(`(() => {
     const luminance = color => {
       const [r, g, b] = color.match(/[\\d.]+/g).slice(0, 3).map(n => {
         const v = Number(n) / 255;
@@ -238,7 +239,7 @@ async function run() {
       return (Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5;
     });
   })()`);
-  assert.equal(readable, true, 'action, navigation, venue names and available court numbers maintain readable contrast');
+  assert.equal(await readable(), true, 'action, navigation, venue names and available court numbers maintain readable contrast');
   const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
   assert.equal(logoWidth, 512);
   assert.equal(await window.webContents.executeJavaScript(`
@@ -248,6 +249,34 @@ async function run() {
     'a disabled native radio does not cover the selected campus label');
   await paint();
   await capture('monitor.png', '.monitor-grid');
+  async function theme(value) {
+    nativeTheme.themeSource = value;
+    await js(`new Promise((resolve, reject) => {
+      const limit = performance.now() + 3500;
+      const check = () => {
+        if (matchMedia('(prefers-color-scheme: ${value})').matches) return resolve();
+        if (performance.now() > limit) return reject(new Error('Theme did not update'));
+        setTimeout(check, 35);
+      };
+      check();
+    })`);
+    await paint();
+  }
+  await theme('dark');
+  assert.equal(await readable(), true, 'dark mode preserves action, venue and court contrast');
+  await capture('monitor-dark.png', '.monitor-grid');
+  await theme('light');
+
+  await js("document.querySelector('#rows .venue-link').focus()");
+  const changed = [{ ...state.rows[0], courts: [3] }, ...state.rows.slice(1)];
+  window.webContents.send('courtwatch:state', { ...state, rows: changed });
+  await paint();
+  assert.equal(await js("document.activeElement === document.querySelector('#rows .venue-link')"), true, 'a court update keeps the active venue link focused');
+  window.webContents.send('courtwatch:state', { ...state, rows: changed.slice(1) });
+  await paint();
+  assert.equal(await js('document.activeElement.id'), 'schedule-title-label', 'a vanished row returns keyboard focus to the schedule');
+  window.webContents.send('courtwatch:state', state);
+  await paint();
   await window.webContents.executeJavaScript("document.querySelector('#open-target').click()");
   await paint();
   assert.deepEqual(await window.webContents.executeJavaScript(`[

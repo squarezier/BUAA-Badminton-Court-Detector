@@ -281,7 +281,7 @@ test('a temporarily failed keychain refresh keeps a decrypted token usable in me
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'settings.json');
   const token = 'synthetic-test-token';
-  await writeFile(file, JSON.stringify({ version: 1, encryptedToken: 'AAAAAAAB' }));
+  await writeFile(file, JSON.stringify({ version: 1, encryptedToken: Buffer.from('v11test-vault').toString('base64') }));
   const store = new Preferences(file, {
     async isAsyncEncryptionAvailable() { return true; },
     async decryptStringAsync() { return { result: token, shouldReEncrypt: true }; },

@@ -38,12 +38,12 @@
             <div><dt>上次检查</dt><dd id="checked">—</dd></div>
             <div><dt>下次检查</dt><dd id="next">—</dd></div>
           </dl>
-          <div id="monitor-state" class="status" data-tone="neutral" role="status"><i class="dot" aria-hidden="true"></i><span id="monitor-state-label">等待登录</span></div>
+          <div id="monitor-state" class="status" data-tone="neutral" role="status" aria-atomic="true"><i class="dot" aria-hidden="true"></i><span id="monitor-state-label">等待登录</span><span id="monitor-context" class="sr-only"></span></div>
         </div>
 
         <div class="monitor-grid">
           <section class="schedule" aria-labelledby="schedule-title-label">
-            <div class="section-head"><h2 id="schedule-title-label">当前空场</h2><span id="scope" class="subtle"></span></div>
+            <div class="section-head"><h2 id="schedule-title-label" tabindex="-1">当前空场</h2><span id="scope" class="subtle"></span></div>
             <div id="read-error" class="warning" role="status" hidden></div>
             <div id="empty" class="empty"><strong id="empty-title">登录北航后可查看场地</strong><p id="empty-note" hidden></p></div>
             <div class="table-wrap" id="table-wrap" hidden>
@@ -78,9 +78,9 @@
           <div class="saved-strip"><div><span class="field-label">当前范围</span><strong id="saved-range"></strong><span id="saved-place"></span></div><button class="quiet" type="button" id="clear-target" hidden>移除目标</button></div>
           <p class="warning" id="saved-note" hidden></p>
           <form id="target-form">
-            <div class="form-row"><label for="target-date">日期</label><input id="target-date" type="date" required></div>
+            <div class="form-row"><label for="target-date">日期</label><input id="target-date" type="date" aria-describedby="target-error" required></div>
             <div class="form-row"><label for="target-start">时段</label><div class="form-value">
-              <div class="range-fields"><input id="target-start" type="time" aria-label="开始时间" required><span aria-hidden="true">—</span><input id="target-end" type="time" aria-label="结束时间" required></div>
+              <div class="range-fields"><input id="target-start" type="time" aria-label="开始时间" required><span aria-hidden="true">—</span><input id="target-end" type="time" aria-label="结束时间" aria-describedby="target-error" required></div>
               <p class="field-note">按北京时间，场次须完整落在此时段内。</p>
             </div></div>
             <div class="form-row coverage-row"><span class="field-label">场地</span><p id="target-coverage"></p></div>
