@@ -122,7 +122,9 @@ function validatedSnapshot(id, days, started) {
       const { price } = row;
       if (!Number.isFinite(price) || price < 0 || price > 9999) throw new Error('官网场地价格格式异常。');
       const slot = { venue: id, date, ...validatedCourt(row), price };
-      slots.set(slotKey(slot), slot);
+      const key = slotKey(slot);
+      if (slots.has(key) && slots.get(key).price !== price) throw new Error('官网同一场次出现不同价格。');
+      slots.set(key, slot);
     }
     for (const row of booked) {
       const slot = { venue: id, date, ...validatedCourt(row) };

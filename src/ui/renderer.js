@@ -1,6 +1,7 @@
 'use strict';
 
 const app = window.courtWatch;
+document.documentElement.dataset.platform = app?.platform ?? '';
 const get = id => document.getElementById(id);
 const text = (id, value) => { if (get(id).textContent !== value) get(id).textContent = value; };
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -16,6 +17,13 @@ let expiryTimer;
 let intervalDirty = false;
 let pushError = '';
 let editorVersion;
+let editorDay;
+let targetDirty = false;
+let replacingConnection = false;
+let bookingVenues = '';
+
+const venueNames = { '38': '主馆', '39': '训练馆', '57': '综合馆' };
+const venueName = venue => venueNames[venue.id] ?? venue.label;
 
 function showToast(message) {
   const toast = get('toast');
@@ -46,6 +54,12 @@ function runPushAction(action) {
 }
 
 function showPage(page) {
+  if (page !== 'feishu') {
+    get('push-form').reset();
+    replacingConnection = false;
+    pushError = '';
+    if (current) render();
+  }
   for (const nav of document.querySelectorAll('[data-page]')) {
     const selected = nav.dataset.page === page;
     nav.classList.toggle('current', selected);
@@ -56,7 +70,7 @@ function showPage(page) {
   const title = get(`page-${page}`).querySelector('h1');
   title.tabIndex = -1;
   title.focus({ preventScroll: true });
-  window.scrollTo(0, 0);
+  document.querySelector('.workspace').scrollTop = 0;
 }
 
 function shortDay(value) {
@@ -70,41 +84,46 @@ function renderTarget(options, venues, now) {
   const endsAt = target ? Date.parse(`${target.date}T${target.end}:00+08:00`) : 0;
   const expired = Boolean(target && endsAt <= now);
   const campus = campusNames[options.campus];
-  const coverage = `${venues.map(item => item.label).join('、')} · 全部场号`;
+  const coverage = `${venues.map(venueName).join('、')} · 全部场号`;
   text('target-coverage', coverage);
+  const today = isoDay.format(now);
   let range = '全部退订';
-  let place = '此校区的所有时段和场号';
-  let note = '可以提前设定未来的日期。保存后，只有符合目标的场次重新可约时才会提醒。';
+  let place = '所有时段、所有场号';
+  let note = '';
   if (target) {
     const year = target.date.slice(0, 4);
-    const yearLabel = year === isoDay.format(now).slice(0, 4) ? '' : `${year}年`;
+    const yearLabel = year === today.slice(0, 4) ? '' : `${year}年`;
     range = `${yearLabel}${shortDay(target.date)}${expired ? ' · 已结束' : ''}`;
-    place = `${target.start}–${target.end}\n${coverage}`;
-    note = expired ? '此目标已到期，提醒已静默。可以选择新的日期或移除目标。' : '目标仅用于退订推送，场地监控仍显示全校区的绿色空场。';
+    place = `${target.start}–${target.end}`;
+    if (expired) note = '目标已结束。修改日期或移除目标后可继续接收提醒。';
   } else if (target === null) {
-    range = '目标需要重新设置';
-    place = '此校区的推送已静默';
-    note = '已保存的目标无法读取。可以重新保存，或移除目标以接收全部退订。';
+    range = '目标无法读取';
+    place = '提醒已暂停';
+    note = '请重新保存或移除目标。';
   }
-  text('target-campus', `${campus} · 退订时通知`);
+  text('target-campus', campus);
   text('saved-range', range);
   text('shortcut-range', range);
   text('saved-place', place);
   text('shortcut-place', place);
   text('saved-note', note);
-  text('target-link-label', target === undefined ? '设置目标' : '编辑目标');
+  get('saved-note').hidden = !note;
+  text('target-link-label', target === undefined ? '设置' : '编辑');
   get('clear-target').hidden = target === undefined;
-  get('target-date').min = isoDay.format(now);
-  if (editorVersion !== version) {
+  get('target-date').min = today;
+  if (version !== editorVersion) targetDirty = false;
+  if (version !== editorVersion || (!target && !targetDirty && editorDay !== today)) {
     editorVersion = version;
     get('target-date').value = target?.date ?? isoDay.format(now + 86400000);
     get('target-start').value = target?.start ?? '18:00';
     get('target-end').value = target?.end ?? '20:00';
     get('target-error').hidden = true;
   }
+  editorDay = today;
   for (const control of get('target-form').elements) control.disabled = busy;
   get('clear-target').disabled = busy;
-  return endsAt > now ? endsAt : Infinity;
+  const nextMidnight = Date.parse(`${today}T00:00:00+08:00`) + 86400000;
+  return endsAt > now ? Math.min(endsAt, nextMidnight) : nextMidnight;
 }
 
 function submitTarget(event) {
@@ -123,7 +142,7 @@ function submitTarget(event) {
     try {
       await app.saveTarget(campus, target);
       error.hidden = true;
-      showToast('目标已保存，符合条件的退订会推送到已连接的渠道。');
+      showToast('提醒目标已保存。');
     } catch (err) { showError(err.message || '目标保存失败，请重试。'); }
   });
 }
@@ -134,29 +153,71 @@ function appendCell(row, value) {
   return cell;
 }
 
+function renderBookingLinks(venues) {
+  const key = venues.map(venue => venue.id).join(',');
+  if (bookingVenues === key) return;
+  bookingVenues = key;
+  get('booking-links').replaceChildren(...venues.map((venue, index) => {
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'quiet';
+    if (index === 0) link.id = 'open-booking';
+    link.textContent = `${venueName(venue)}预约 ↗`;
+    link.setAttribute('aria-label', `打开${venue.label}官方预约页`);
+    link.addEventListener('click', () => act(() => app.openVenue(venue.id)));
+    return link;
+  }));
+}
+
 function renderTable(rows, venues) {
   const fingerprint = JSON.stringify(rows);
   if (fingerprint === renderedRows) return;
   renderedRows = fingerprint;
   const body = get('rows');
   body.replaceChildren();
+  let dateCell;
   for (const slot of rows) {
     const row = body.insertRow();
-    appendCell(row, shortDay(slot.date));
-    appendCell(row, `${slot.start}–${slot.end}`);
+    if (dateCell?.dataset.date !== slot.date) {
+      row.className = 'new-day';
+      dateCell = document.createElement('th');
+      dateCell.className = 'date-cell';
+      dateCell.id = `day-${slot.date}`;
+      dateCell.dataset.date = slot.date;
+      dateCell.setAttribute('aria-label', shortDay(slot.date));
+      const day = document.createElement('strong');
+      day.textContent = slot.date.slice(5).replace('-', '/');
+      const week = document.createElement('small');
+      week.textContent = weekday.format(new Date(`${slot.date}T12:00:00+08:00`));
+      dateCell.append(day, week);
+      row.append(dateCell);
+    } else {
+      dateCell.rowSpan++;
+    }
+    appendCell(row, `${slot.start}–${slot.end}`).className = 'slot-time';
     const venue = venues.find(item => item.id === slot.venue);
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'quiet venue-link';
-    link.textContent = venue?.label ?? '预约页';
-    link.title = '在北航官网查看这个场馆';
+    link.dataset.venue = slot.venue;
+    link.textContent = venue ? venueName(venue) : '预约页';
+    link.setAttribute('aria-label', `打开${venue?.label ?? '场馆'}官方预约页`);
     link.addEventListener('click', () => act(() => app.openVenue(slot.venue)));
     row.insertCell().append(link);
     const courts = document.createElement('span');
     courts.className = 'court-numbers';
-    courts.textContent = `${slot.courts.join('、')}号`;
+    courts.setAttribute('role', 'group');
+    courts.setAttribute('aria-label', `${slot.courts.join('、')}号`);
+    for (const court of slot.courts) {
+      const mark = document.createElement('span');
+      mark.className = 'court-number';
+      mark.textContent = court;
+      courts.append(mark);
+    }
     row.insertCell().append(courts);
-    appendCell(row, slot.price ? `¥${number.format(slot.price)}` : '免费');
+    appendCell(row, slot.price ? `¥${number.format(slot.price)}` : '免费').className = 'price';
+    const columns = ['time', 'venue', 'courts', 'price'];
+    row.querySelectorAll('td').forEach((cell, index) => cell.headers = `${dateCell.id} col-${columns[index]}`);
   }
 }
 
@@ -196,7 +257,8 @@ function render() {
   text('monitor-state-label', status);
   get('monitor-state').dataset.tone = tone;
   text('selected-campus', campusNames[options.campus]);
-  text('selected-venues', `${venues.map(venue => venue.label).join('、')} · 每 ${options.interval} 分钟检查`);
+  text('selected-venues', venues.map(venueName).join(' · '));
+  renderBookingLinks(venues);
   text('count', anyResult ? number.format(slotCount) : '—');
   text('checked', lastAt ? time.format(lastAt) : '—');
   text('next', nextAt ? time.format(nextAt) : checking ? '查询中' : '—');
@@ -204,36 +266,31 @@ function render() {
   get('monitor-action').dataset.running = String(running);
   get('monitor-action').disabled = busy || !signedIn;
   get('campus-field').disabled = busy || running;
+  get('campus-field').title = running ? '暂停监控后可切换校区' : '';
   for (const input of document.querySelectorAll('input[name="campus"]')) input.checked = input.value === options.campus;
   if (!intervalDirty) get('interval').value = String(options.interval);
   get('interval').disabled = busy;
-  get('save-interval').disabled = busy;
+  get('save-interval').disabled = busy || !intervalDirty;
   text('schedule-title-label', !running && anyResult ? '上次核验空场' : '当前空场');
 
   const dates = [...new Set(verifiedVenues.flatMap(venue => venue.dates))].sort();
   const showDate = value => `${Number(value.slice(5, 7))}月${Number(value.slice(8, 10))}日`;
   const range = dates.length > 1 ? `${showDate(dates[0])}–${showDate(dates.at(-1))}` : dates[0] ? showDate(dates[0]) : '';
-  text('scope', range ? `${range} · ${rows.length} 个有空场的时段` : '仅统计官网的绿色可约格');
-  const freshestError = errors[0];
-  get('read-error').hidden = !freshestError;
-  if (freshestError) {
-    const lastSuccess = freshestError.at ? `　上次成功于 ${time.format(freshestError.at)}。` : '';
-    text('read-error', `${freshestError.label} · ${freshestError.error}${lastSuccess}`);
-  }
+  text('scope', range);
+  get('read-error').hidden = !errors.length;
+  text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error}`).join('\n'));
   get('empty').hidden = rows.length > 0;
   get('table-wrap').hidden = rows.length === 0;
   renderTable(rows, venues);
   if (!rows.length) {
-    let title = '登录后可查看余量';
-    let note = '启动监控后，官网标绿且尚未开始的空场会显示在这里。';
-    if (signedIn) {
-      title = '等待首次查询';
-      note = '点击开始监控，读取当前开放的日期和场地。';
-    }
-    if (checking) { title = '正在读取官网场地'; note = '查询完成后，空场会显示在这里。'; }
-    else if (freshestError) { title = '余量查询暂时不完整'; note = running ? '应用将自动重试。' : '登录并启动监控后，可重新查询。'; }
-    else if (anyResult) { title = '暂无可显示的空场'; note = running ? '出现新的空场时，应用会更新这里。' : '启动监控后继续查询。'; }
+    let title = '登录北航后可查看场地';
+    let note = '';
+    if (signedIn) title = '开始监控后查看空场';
+    if (checking) title = '正在读取场地…';
+    else if (errors.length) { title = '部分场地未能核验'; note = running ? '将在下轮检查时重试。' : ''; }
+    else if (anyResult) title = running ? '当前没有绿色可约场次' : '上次检查没有绿色可约场次';
     text('empty-title', title);
+    get('empty-note').hidden = !note;
     text('empty-note', note);
   }
 
@@ -248,10 +305,16 @@ function render() {
   get('push-connect').disabled = busy;
   get('feishu-webhook').disabled = busy;
   get('feishu-secret').disabled = busy;
-  get('push-actions').hidden = !delivery.configured && !delivery.persistent;
+  const connected = delivery.configured && current.pushService === 'feishu';
+  get('push-form').hidden = connected && !replacingConnection;
+  get('cancel-replace').hidden = !connected || !replacingConnection;
+  get('cancel-replace').disabled = busy;
+  get('replace-connection').hidden = !connected || replacingConnection;
+  get('replace-connection').disabled = busy;
+  get('push-actions').hidden = (!delivery.configured && !delivery.persistent) || (connected && replacingConnection);
   get('push-test').hidden = !delivery.configured;
   get('push-test').disabled = busy;
-  text('push-test', legacyService ? '测试当前渠道' : '再次发送测试');
+  text('push-test', legacyService ? '测试当前渠道' : '发送测试');
   get('remove-connection').disabled = busy;
   get('push-feedback').hidden = !pushError && !delivery.text;
   get('push-feedback').dataset.tone = pushError || ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : 'neutral';
@@ -275,15 +338,14 @@ if (!app) {
   for (const nav of document.querySelectorAll('[data-page]')) nav.addEventListener('click', () => showPage(nav.dataset.page));
   get('account-action').addEventListener('click', () => act(() => current?.auth === 'signed-in' ? app.logOut() : app.login()));
   get('monitor-action').addEventListener('click', () => act(() => current?.running ? app.pause() : app.start()));
-  get('open-booking').addEventListener('click', () => act(() => app.openVenue(current.venues[0].id)));
   get('open-target').addEventListener('click', () => showPage('target'));
-  get('target-form').addEventListener('input', () => { get('target-error').hidden = true; });
+  get('target-form').addEventListener('input', () => { targetDirty = true; get('target-error').hidden = true; });
   get('target-form').addEventListener('submit', submitTarget);
   get('clear-target').addEventListener('click', () => act(async () => {
     await app.saveTarget(current.options.campus, null);
     showToast('已恢复此校区的全部退订提醒。');
   }));
-  get('interval').addEventListener('input', () => { intervalDirty = true; });
+  get('interval').addEventListener('input', () => { intervalDirty = true; get('save-interval').disabled = busy; });
   get('interval-form').addEventListener('submit', event => {
     event.preventDefault();
     const input = get('interval');
@@ -299,13 +361,26 @@ if (!app) {
     input.addEventListener('change', () => { if (input.checked && current) void updateOptions({ campus: input.value }); });
   }
   get('push-guide').addEventListener('click', () => act(() => app.pushGuide()));
+  get('replace-connection').addEventListener('click', () => {
+    replacingConnection = true;
+    pushError = '';
+    render();
+    get('feishu-webhook').focus();
+  });
+  get('cancel-replace').addEventListener('click', () => {
+    get('push-form').reset();
+    replacingConnection = false;
+    pushError = '';
+    render();
+    get('replace-connection').focus();
+  });
   get('push-form').addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget;
     const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value };
-    void runPushAction(async () => { await app.connectPush(connection); form.reset(); });
+    void runPushAction(async () => { await app.connectPush(connection); form.reset(); replacingConnection = false; });
   });
-  get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('通知连接已断开。'); }));
+  get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); get('push-form').reset(); replacingConnection = false; showToast('通知连接已断开。'); }));
   get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));

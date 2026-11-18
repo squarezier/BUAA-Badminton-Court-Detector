@@ -356,12 +356,38 @@ test('the morning refresh records newly published slots and alerts only for a ve
   booking = { dates: ['2026-11-18', '2026-11-20'], slots: [slot(1), slot(2), newSlot] };
   await monitor.check();
   assert.equal(monitor.state().slotCount, 3);
-  assert.equal(monitor.state().nextAt, release + 1800000);
+  assert.equal(monitor.state().nextAt, release + 28 * 60000);
   assert.deepEqual(messages.map(message => message.title), ['候羽｜沙河校区疑似退订 1 场次']);
   assert.match(messages[0].content, /2号/);
   assert.doesNotMatch(messages[0].content, /4号|11月20日/);
   await monitor.check();
   assert.equal(messages.length, 1);
+});
+
+test('interval edits during the 07:00 supplemental scan use the preceding regular sample', async t => {
+  const release = Date.parse('2026-11-18T07:00:00+08:00');
+  let now = release - 2 * 60000;
+  const read = deferred();
+  const monitor = setup(t, { now: () => now, options: { campus: 'shahe', interval: 30 },
+    async checkVenue() { return now < release ? stamped() : read.promise; } });
+  await monitor.check();
+  now = release;
+  const reading = monitor.check();
+  monitor.setOptions({ campus: 'shahe', interval: 10 });
+  now += 12000;
+  read.resolve(stamped());
+  await reading;
+  assert.equal(monitor.state().nextAt, release + 8 * 60000);
+});
+
+test('a late supplemental timer covers the regular check when its deadline has already passed', async t => {
+  const release = Date.parse('2026-11-18T07:00:00+08:00');
+  let now = release - 60000;
+  const monitor = setup(t, { now: () => now });
+  await monitor.check();
+  now = release + 120000;
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, now + 120000);
 });
 
 test('a scan straddling the morning release runs one fresh check immediately afterward', async t => {
@@ -435,7 +461,10 @@ test('10000 scheduled cycles tolerate rolling dates, availability changes and ne
     const state = monitor.state();
     assert.equal(state.slotCount, down ? 0 : slots.length);
     assert.equal(sent, expectedSent);
-    assert.ok(state.nextAt >= Math.min(now + 120000, nextBookingRelease(now)));
+    assert.ok(state.nextAt > now);
+    if (now !== nextBookingRelease(now - 1)) {
+      assert.ok(state.nextAt >= Math.min(now + 120000, nextBookingRelease(now)));
+    }
     assert.ok(state.nextAt <= now + 900000);
     assert.equal(monitor.task, null);
     assert.equal(monitor.pending.size, 0);

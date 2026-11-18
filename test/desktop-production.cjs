@@ -111,7 +111,7 @@ async function run(win) {
   const state = () => js('window.courtWatch.state()');
   async function click(selector) {
     const target = `document.querySelector(${JSON.stringify(selector)})`;
-    await waitFor(() => js(`Boolean(${target} && !${target}.matches(':disabled'))`), `enabled control ${selector}`);
+    await waitFor(() => js(`Boolean(${target} && ${target}.checkVisibility() && !${target}.matches(':disabled'))`), `enabled control ${selector}`);
     return js(`${target}.click()`);
   }
   async function waitFor(passes, description) {
@@ -124,6 +124,15 @@ async function run(win) {
     throw new Error(`Timed out: ${description}`);
   }
   const wake = () => { powerMonitor.emit('suspend'); powerMonitor.emit('resume'); };
+
+  assert.equal(await js("getComputedStyle(document.querySelector('.window-bar')).getPropertyValue('app-region')"), 'drag');
+  assert.equal(await js("document.querySelector('.window-bar').getBoundingClientRect().bottom <= document.querySelector('#monitor-action').getBoundingClientRect().top"), true);
+  assert.ok(win.isMinimizable() && win.isMaximizable() && win.isClosable());
+  if (process.platform === 'darwin') assert.deepEqual(win.getWindowButtonPosition(), { x: 17, y: 13 });
+  if (process.platform === 'win32') {
+    await waitFor(() => js("navigator.windowControlsOverlay?.visible && navigator.windowControlsOverlay.getTitlebarAreaRect().width < innerWidth"), 'native Windows system buttons occupy the titlebar overlay');
+  }
+  cases++;
 
   assert.equal((await state()).auth, 'signed-out');
   assert.equal(await js('document.querySelector("#monitor-action").disabled'), true);
@@ -262,6 +271,11 @@ async function run(win) {
   await click('input[name="campus"][value="xueyuanlu"]');
   await waitFor(view => view.options.campus === 'xueyuanlu', 'switch to Xueyuanlu while paused');
   assert.equal(JSON.parse(fs.readFileSync(settings, 'utf8')).options.campus, 'xueyuanlu');
+  await click('#booking-links button:nth-child(2)');
+  await waitFor(() => BrowserWindow.getAllWindows().some(page =>
+    page !== win && page.webContents.getURL() === `${campusOrigin}/venue/venue-reservation/39`
+  ), 'the training hall booking link opens its own official venue');
+  cases++;
   await click('#monitor-action');
   const xueyuanlu = await waitFor(view => view.running && !view.checking && view.slotCount === 6, 'both Xueyuanlu venues scanned');
   assert.deepEqual(xueyuanlu.rows.map(row => row.venue), ['38', '39']);

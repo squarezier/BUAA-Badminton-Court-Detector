@@ -42,6 +42,13 @@ test('validated snapshots keep confirmed reservations separate from green slots'
   assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [], reserved: [{ ...reserved, start: '25:00' }] }], now));
 });
 
+test('duplicate available cells must agree on the price', () => {
+  const available = { court: 3, start: '17:00', end: '18:00', price: 25 };
+  const read = slots => validatedSnapshot('57', [{ label: '11月18日', slots }], now);
+  assert.equal(read([available, available]).slots.length, 1);
+  assert.throws(() => read([available, { ...available, price: 15 }]), /价格/);
+});
+
 test('initial availability and a newly published green slot do not send a notice', async t => {
   let response = sample(slot(1));
   const pushes = [];

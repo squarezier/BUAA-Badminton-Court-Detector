@@ -391,9 +391,15 @@ async function initialize() {
   monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted), prefs.warning);
   setupIpc();
 
+  const nativeTitleBar = process.platform === 'darwin'
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 17, y: 13 } }
+    : process.platform === 'win32'
+      ? { titleBarStyle: 'hidden', titleBarOverlay: { color: '#f9f7f2', symbolColor: '#445461', height: 36 } }
+      : {};
   mainWindow = new BrowserWindow({
+    ...nativeTitleBar,
     width: 1130, height: 820, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
-    show: false, backgroundColor: '#f8f9fb', autoHideMenuBar: true,
+    show: false, backgroundColor: '#f9f7f2', autoHideMenuBar: true,
     webPreferences: { ...webPreferences, session: uiSession, preload: path.join(__dirname, 'preload.cjs') },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

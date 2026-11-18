@@ -6,11 +6,13 @@ const { randomBytes } = require('node:crypto');
 const { CAMPUSES, validOptions, validTarget, targetFields } = require('./courts.cjs');
 const { decodePushConnection, encodePushConnection } = require('./push-connection.cjs');
 
+const defaultOptions = { campus: 'shahe', interval: 2 };
+
 class Preferences {
   constructor(file, storage) {
     this.file = file;
     this.storage = storage;
-    this.options = { campus: 'shahe', interval: 2, targets: {} };
+    this.options = { ...defaultOptions, targets: {} };
     this.connection = null;
     this.encrypted = null;
     this.warning = '';
@@ -27,8 +29,12 @@ class Preferences {
       if (error.code !== 'ENOENT') this.warning = '本地设置无法读取，已恢复默认设置。';
       return;
     }
-    if (validOptions(data?.options)) {
-      const { campus, interval, targets } = data.options;
+    if (data?.options && typeof data.options === 'object') {
+      const stored = data.options;
+      const campus = typeof stored.campus === 'string' && Object.hasOwn(CAMPUSES, stored.campus) ? stored.campus : defaultOptions.campus;
+      const interval = validOptions({ campus, interval: stored.interval }) ? stored.interval : defaultOptions.interval;
+      const targets = stored.targets;
+      if (campus !== stored.campus || interval !== stored.interval) this.warning = '校区或检查间隔已恢复默认，已保留提醒目标。';
       this.options = { campus, interval, targets: {} };
       if (targets !== undefined) {
         const readable = targets !== null && typeof targets === 'object' && !Array.isArray(targets);

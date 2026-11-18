@@ -155,7 +155,12 @@ async function readBookingPage({ bookableLabels, nowClock }) {
       document.body.innerText.match(hoursPattern)?.slice(1);
   }
 
-  const loaded = await waitFor(() => dateButtons().length && operatingHours() && (readWindow() || closedMessage()), 9000);
+  const loaded = await waitFor(() => {
+    const hours = operatingHours();
+    if (!dateButtons().length || !hours) return false;
+    // After closing the selected day can have no grid and no closure message.
+    return (activeDate() === todayLabel && nowClock >= hours[1]) || readWindow() || closedMessage();
+  }, 9000);
   if (!loaded) return { error: 'layout' };
   const [opening, closing] = operatingHours();
   const labels = dateButtons().map(labelOf);

@@ -10,6 +10,7 @@ function invoke(action, value) {
 }
 
 contextBridge.exposeInMainWorld('courtWatch', Object.freeze({
+  platform: process.platform,
   state: () => invoke('state'),
   onState: callback => {
     const receive = (_event, state) => callback(state);

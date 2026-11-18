@@ -80,10 +80,10 @@ def blend(a, b, amount):
 def icon(x, y, px):
     alpha = opacity(rounded_distance(x, y, 12, 12, 500, 500, 114), px)
     court = min(rounded_distance(x, y, *bounds, 9) for bounds in COURT_LINES)
-    color = blend((0, 91, 172), (152, 205, 250), opacity(court, px) / 255)
+    color = blend((73, 102, 126), (177, 194, 195), opacity(court, px) / 255)
     feathers, cork = mark(x, y, px)
-    color = blend(color, (255, 255, 255), feathers / 255)
-    color = blend(color, (217, 238, 255), cork / 255)
+    color = blend(color, (249, 247, 239), feathers / 255)
+    color = blend(color, (220, 204, 188), cork / 255)
     return (*color, alpha)
 
 

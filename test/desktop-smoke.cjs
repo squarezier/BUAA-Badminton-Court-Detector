@@ -23,7 +23,7 @@ const auditedVenues = [
 ];
 
 function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
-  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [] }) {
+  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [], blankAfterClosing = false }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
   const table = document.querySelector('table');
   const head = table.createTHead();
@@ -35,7 +35,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
   const hour = value => `${String(value).padStart(2, '0')}:00`;
   function drawHeader() {
     head.replaceChildren();
-    if (!closure.hidden) return;
+    if (!closure.hidden || (blankAfterClosing && selected === 0)) return;
     const header = head.insertRow();
     header.insertCell().textContent = '场地';
     const first = starts[page];
@@ -61,7 +61,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
   }
   function drawRows() {
     body.replaceChildren();
-    if (!closure.hidden) return;
+    if (!closure.hidden || (blankAfterClosing && selected === 0)) return;
     const first = starts[page];
     for (const court of courts) {
       const row = body.insertRow();
@@ -139,6 +139,8 @@ async function run() {
   assert.deepEqual(conflict, { error: 'colors' });
   const afterClosure = await readFixture({ ...auditedVenues[1], closed: [0], switchDelay: 650 });
   assert.deepEqual(afterClosure.days.map(day => day.slots.length), [0, 8, 7]);
+  const night = await readFixture({ ...auditedVenues[1], blankAfterClosing: true }, Date.parse('2026-11-18T22:01:00+08:00'));
+  assert.deepEqual(night.days.map(day => day.slots.length), [0, 8, 7], 'an empty table after closing must not hide the next two dates');
   const afterDecoration = await readFixture({ ...auditedVenues[1], decorateBeforeRefresh: true, switchDelay: 900 });
   assert.equal(afterDecoration.error, undefined, 'a date switch can complete after the real refresh');
   assert.deepEqual(afterDecoration.days.map(day => day.slots.length), [0, 8, 7], 'visual changes must not make stale rows count for a new date');
@@ -164,16 +166,20 @@ async function run() {
   page.destroy();
 
   const state = {
-    options: { campus: 'shahe', interval: 2, targets: { shahe: {
-      date: '2026-11-20', start: '12:00', end: '16:00',
+    options: { campus: 'xueyuanlu', interval: 2, targets: { xueyuanlu: {
+      date: '2026-11-20', start: '18:00', end: '20:00',
     } } }, auth: 'signed-in', running: true, checking: false,
     suspended: false, nextAt: Date.parse('2026-11-18T14:10:00+08:00'), lastAt: Date.parse('2026-11-18T14:08:00+08:00'), slotCount: 9,
     rows: [
-      { date: '2026-11-18', start: '17:00', end: '18:00', venue: '57', courts: [3, 5], price: 25 },
-      { date: '2026-11-20', start: '12:00', end: '13:00', venue: '57', courts: [5, 7, 8], price: 15 },
-      { date: '2026-11-20', start: '14:00', end: '15:00', venue: '57', courts: [4, 5, 7, 8], price: 15 },
+      { date: '2026-11-18', start: '17:00', end: '18:00', venue: '38', courts: [3, 5], price: 25 },
+      { date: '2026-11-19', start: '08:00', end: '09:00', venue: '39', courts: [17, 20, 23], price: 15 },
+      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '38', courts: [4, 7], price: 25 },
+      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '39', courts: [18], price: 25 },
+      { date: '2026-11-20', start: '19:00', end: '20:00', venue: '39', courts: [21], price: 25 },
     ],
-    venues: [{ id: '57', label: '综合馆', dates: ['2026-11-18', '2026-11-19', '2026-11-20'], at: 1, error: '' }],
+    venues: ['体育馆主馆', '体育馆训练馆（副馆）'].map((label, index) => ({
+      id: String(38 + index), label, dates: ['2026-11-18', '2026-11-19', '2026-11-20'], at: 1, error: '',
+    })),
     delivery: { configured: true, persistent: true, status: 'ready', text: '', at: null }, pushService: 'feishu',
   };
   ipcMain.handle('courtwatch:state', () => ({ ok: true, value: state }));
@@ -194,7 +200,7 @@ async function run() {
   const code = `new Promise((resolve, reject) => {
     const deadline = performance.now() + 3000;
     const timer = setInterval(() => {
-      const ready = document.getElementById('rows').innerText.includes('3、5号');
+      const ready = document.querySelector('.court-numbers')?.getAttribute('aria-label') === '3、5号';
       if (ready || performance.now() > deadline) {
         clearInterval(timer);
         if (!ready) return reject(new Error('UI did not render mock slots'));
@@ -204,7 +210,35 @@ async function run() {
   })`;
   assert.equal(await window.webContents.executeJavaScript(code), '已登录');
   const paint = () => window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-  assert.equal(await window.webContents.executeJavaScript("document.title"), '候羽');
+  const js = code => window.webContents.executeJavaScript(code);
+  async function capture(name, selector) {
+    await paint();
+    const rect = await js(`(() => {
+      const area = document.querySelector('${selector}').getBoundingClientRect();
+      const right = Math.min(innerWidth, Math.ceil(area.right) + 24);
+      return { x: 0, y: 0, width: right, height: Math.min(innerHeight, Math.ceil(area.bottom) + 24) };
+    })()`);
+    await fs.writeFile(path.join(target, name), (await window.webContents.capturePage(rect)).toPNG());
+  }
+  assert.equal(await js('document.title'), '候羽');
+  assert.deepEqual(await js("[...document.querySelectorAll('.date-cell')].map(cell => cell.rowSpan)"), [1, 1, 3]);
+  assert.deepEqual(await js("[...document.querySelectorAll('#booking-links button')].map(el => el.textContent)"), ['主馆预约 ↗', '训练馆预约 ↗']);
+  const readable = await js(`(() => {
+    const luminance = color => {
+      const [r, g, b] = color.match(/[\\d.]+/g).slice(0, 3).map(n => {
+        const v = Number(n) / 255;
+        return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+      });
+      return .2126 * r + .7152 * g + .0722 * b;
+    };
+    return ['.button.primary', '.nav.current', '.court-number', '[data-venue="38"]', '[data-venue="39"]'].every(selector => {
+      const el = document.querySelector(selector);
+      const style = getComputedStyle(el);
+      const a = luminance(style.color), b = luminance(style.backgroundColor);
+      return (Math.max(a, b) + .05) / (Math.min(a, b) + .05) >= 4.5;
+    });
+  })()`);
+  assert.equal(readable, true, 'action, navigation, venue names and available court numbers maintain readable contrast');
   const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
   assert.equal(logoWidth, 512);
   assert.equal(await window.webContents.executeJavaScript(`
@@ -213,22 +247,29 @@ async function run() {
   assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('input[name=campus]:disabled')).opacity"), '0',
     'a disabled native radio does not cover the selected campus label');
   await paint();
-  await fs.writeFile(path.join(target, 'monitor.png'), (await window.webContents.capturePage()).toPNG());
+  await capture('monitor.png', '.monitor-grid');
   await window.webContents.executeJavaScript("document.querySelector('#open-target').click()");
   await paint();
   assert.deepEqual(await window.webContents.executeJavaScript(`[
     document.querySelector('#page-target').hidden, document.querySelector('#target-date').value,
     document.querySelector('#target-start').value, document.querySelector('#target-end').value,
     document.querySelector('#target-coverage').textContent,
-  ]`), [false, '2026-11-20', '12:00', '16:00', '综合馆 · 全部场号']);
-  await fs.writeFile(path.join(target, 'target.png'), (await window.webContents.capturePage()).toPNG());
+  ]`), [false, '2026-11-20', '18:00', '20:00', '主馆、训练馆 · 全部场号']);
+  await capture('target.png', '#page-target .form-sheet');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
   assert.equal(await window.webContents.executeJavaScript("document.querySelector('#page-feishu').hidden"), false);
-  await fs.writeFile(path.join(target, 'feishu.png'), (await window.webContents.capturePage()).toPNG());
+  assert.equal(await js("document.querySelector('#push-form').hidden"), true);
+  await js("document.querySelector('#replace-connection').click(); document.querySelector('#feishu-webhook').value='test-draft'; document.querySelector('#cancel-replace').click()");
+  assert.equal(await js("document.querySelector('#push-form').hidden && document.querySelector('#feishu-webhook').value === ''"), true);
+  const disconnected = { ...state, pushService: null, delivery: { configured: false, persistent: false, status: 'off', at: null, text: '' } };
+  window.webContents.send('courtwatch:state', disconnected);
+  await paint();
+  assert.equal(await js("document.querySelector('#push-status').textContent"), '未连接');
+  await capture('feishu.png', '.push-sheet');
   window.setContentSize(740, 600);
   await paint();
-  const viewportFit = () => window.webContents.executeJavaScript('innerWidth <= 760 && document.documentElement.scrollWidth <= innerWidth');
+  const viewportFit = () => window.webContents.executeJavaScript("innerWidth <= 760 && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth");
   assert.equal(await viewportFit(), true, 'Feishu page fits the minimum width');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=target]').click()");
   await paint();
@@ -242,6 +283,15 @@ async function run() {
   assert.equal(await window.webContents.executeJavaScript(`
     document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom
   `), true, 'Monitoring controls move below the results at the minimum width');
+  const crowdedRow = { ...state.rows[0], courts: Array.from({ length: 120 }, (_, i) => i + 1) };
+  window.webContents.send('courtwatch:state', { ...state, rows: [crowdedRow] });
+  await paint();
+  assert.deepEqual(await js(`[
+    document.querySelectorAll('.court-number').length, document.querySelector('.court-number:last-child').textContent,
+    document.querySelector('.table-wrap').scrollWidth <= document.querySelector('.table-wrap').clientWidth,
+  ]`), [120, '120', true], 'court numbers wrap at the minimum width without losing the final court');
+  window.webContents.send('courtwatch:state', state);
+  await paint();
   const expiredSlotRemoved = await window.webContents.executeJavaScript(`new Promise(resolve => {
     const baseline = performance.now();
     Date.now = () => Date.parse('2026-11-18T16:59:59.800+08:00') + performance.now() - baseline;
@@ -262,6 +312,32 @@ async function run() {
     !document.querySelector('#push-actions').hidden && !document.querySelector('#remove-connection').disabled,
     document.querySelector('#push-test').hidden,
   ]`), [true, true], 'a saved but inaccessible connection can be cleared from the application');
+  const unrestricted = { ...state, rows: [], options: { ...state.options, targets: {} } };
+  window.webContents.send('courtwatch:state', unrestricted);
+  await paint();
+  await js("document.querySelector('[data-page=target]').click()");
+  async function crossMidnight(date) {
+    await js(`(() => {
+      const t = performance.now();
+      Date.now = () => Date.parse('${date}T23:59:59.750+08:00') + performance.now() - t;
+      window.dispatchEvent(new Event('focus'));
+    })()`);
+    const before = await js("document.querySelector('#target-date').min");
+    await js(`new Promise((resolve, reject) => {
+      const start = performance.now();
+      const tick = () => {
+        if (document.querySelector('#target-date').min !== '${before}') return resolve();
+        if (performance.now() - start > 3500) return reject(new Error('Date minimum did not roll forward'));
+        setTimeout(tick, 40);
+      };
+      tick();
+    })`);
+  }
+  await crossMidnight('2026-11-18');
+  assert.equal(await js("document.querySelector('#target-date').value"), '2026-11-20');
+  await js("const dateInput = document.querySelector('#target-date'); dateInput.value = '2026-12-11'; dateInput.dispatchEvent(new Event('input', { bubbles: true }))");
+  await crossMidnight('2026-11-19');
+  assert.equal(await js("document.querySelector('#target-date').value"), '2026-12-11', 'untouched defaults advance while an explicit draft survives midnight');
   window.destroy();
   process.stdout.write('Electron UI and timetable regressions passed, including delayed and overlapping pages, expiry, and clearing unreadable settings.\n');
   app.exit(0);

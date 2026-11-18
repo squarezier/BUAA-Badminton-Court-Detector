@@ -217,7 +217,10 @@ class CourtMonitor {
     clearTimeout(this.timer);
     this.timer = null;
     const task = new AbortController();
-    const releaseAt = nextBookingRelease(this.now());
+    const began = this.now();
+    const releaseAt = nextBookingRelease(began);
+    const supplemental = this.nextAt !== null && this.nextAt <= began && began < this.nextRegularAt;
+    const regularAnchor = supplemental ? this.nextRegularAt - this.pollDelay() : null;
     this.task = task;
     this.nextAt = null;
     this.nextRegularAt = null;
@@ -248,7 +251,12 @@ class CourtMonitor {
       if (this.task === task) {
         this.task = null;
         if (!task.signal.aborted) this.cyclesWithErrors = failed.size === venueIds.length ? Math.min(this.cyclesWithErrors + 1, 3) : 0;
-        this.schedule(task.signal.aborted || this.now() >= releaseAt ? 0 : this.pollDelay());
+        const finished = this.now();
+        let delay = this.pollDelay();
+        if (regularAnchor !== null && !this.cyclesWithErrors && regularAnchor + delay > finished) {
+          delay = regularAnchor + delay - finished;
+        }
+        this.schedule(task.signal.aborted || finished >= releaseAt ? 0 : delay);
       }
     }
   }

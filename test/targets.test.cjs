@@ -214,3 +214,13 @@ test('preferences migrate older files and restore each campus target independent
   await next.load();
   assert.deepEqual(next.options.targets, { shahe: null, xueyuanlu: null });
 });
+
+test('a damaged interval cannot widen the saved notification range on upgrade', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'houyu-options-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'prefs.json');
+  await writeFile(file, JSON.stringify({ options: { campus: 'xueyuanlu', interval: 0, targets: { xueyuanlu: rule } } }));
+  const prefs = new Preferences(file, {});
+  await prefs.load();
+  assert.deepEqual(prefs.options, { campus: 'xueyuanlu', interval: 2, targets: { xueyuanlu: rule } });
+});

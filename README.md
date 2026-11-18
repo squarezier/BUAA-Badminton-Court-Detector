@@ -1,29 +1,35 @@
-<p align="center"><img src="src/ui/icon.png" alt="候羽" width="88"></p>
-<h1 align="center">BUAA Badminton Court Detector</h1>
-<p align="center"><strong>候羽</strong> · 北航羽毛球空场监控与飞书提醒</p>
+<p align="center"><img src="src/ui/icon.png" width="68" alt="候羽的羽毛球图标"></p>
+<h1 align="center">候羽</h1>
+<p align="center">BUAA Badminton Court Detector · 北航羽毛球退订提醒</p>
 
-## 下载 v1.6.0
+## 下载 v1.6.1
 
-| 平台 | 下载 |
+| 你的电脑 | 安装包 |
 | --- | --- |
-| macOS · Apple 芯片（M 系列） | [Houyu-macOS-arm64.zip](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.0/Houyu-macOS-arm64.zip) |
-| macOS · Intel 芯片 | [Houyu-macOS-x64.zip](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.0/Houyu-macOS-x64.zip) |
-| Windows 10/11 · x64 | [Houyu-Windows-x64.zip](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.0/Houyu-Windows-x64.zip) |
+| Mac · Apple 芯片（M 系列） | [下载 macOS arm64 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-macOS-arm64.zip) |
+| Mac · Intel 芯片 | [下载 macOS Intel 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-macOS-x64.zip) |
+| Windows 10 / 11 · x64 | [下载 Windows 版](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-Windows-x64.zip) |
 
-[源码压缩包](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.0/Houyu-Source.zip) · [SHA-256 校验](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.0/Houyu-SHA256SUMS.txt) · [版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v1.6.0)
+完整解压后，在 macOS 13 或更新版本打开「候羽」，在 Windows 打开 `Houyu.exe`。[打开应用](docs/guide.md#打开应用) · [源码](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-Source.zip) · [SHA-256 校验](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v1.6.1/Houyu-SHA256SUMS.txt) · [版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v1.6.1)
 
-macOS 需要 13 或更新版本。完整解压后，Mac 打开「候羽」，Windows 打开 `Houyu.exe`。本地构建包的签名情况见[使用指南](docs/guide.md#打开应用)。
+## 使用手册
 
-## 三步上手
+### 1. 连接飞书
 
-1. 点「登录北航」，在学校统一身份认证页登录。
-2. 在飞书群里添加「自定义机器人」，把 Webhook 填到候羽的「飞书通知」，点「连接并测试」。
-3. 选择校区和检查频率，点「开始监控」。只想等某天的场时，打开「提醒目标」，选择日期、开始和结束时间。
+在飞书群里添加「自定义机器人」。打开候羽的「飞书通知」，粘贴 Webhook，点 **连接并测试**。若机器人开启了签名校验，同时填入签名密钥。在群里收到「候羽｜测试提醒」即已连通。
 
-例如设为「学院路 · 周五 18:00–20:00」，主馆和训练馆在这个时段内从已预约变为绿色可约的场次都会推送，卡片列全时段、场馆和场号。两个校区各自保存一个目标。首次查询和每天 07:00 正常放号都只更新空场表。
+<img src="docs/feishu.png" width="690" alt="飞书通知页，包含 Webhook、可选签名密钥和连接并测试按钮">
 
-## 界面预览
+### 2. 登录并开始监控
 
-![候羽场地监控界面（示例数据）](docs/monitor.png)
+点左下角 **登录北航**，在学校官网完成认证。选择校区，按需修改并保存检查间隔，点 **开始监控**。下图是运行后的示例，绿色数字是可约场号，点场馆名即可打开对应的官网预约页。
 
-[查看目标设置界面](docs/target.png) · [完整使用、测试与构建指南](docs/guide.md)
+<img src="docs/monitor.png" width="940" alt="学院路空场表，同一天的主馆与训练馆分别列出时段、可约场号和价格">
+
+### 3. 只等想打的时段（可选）
+
+在 **提醒目标** 选好日期和起止时间，点 **保存目标**。例如学院路 18:00–20:00，主馆和训练馆在范围内的所有退订场次都会纳入提醒。移除目标后，恢复这个校区所有时段的退订提醒。
+
+<img src="docs/target.png" width="690" alt="学院路 18:00 到 20:00 的目标，覆盖主馆和训练馆全部场号">
+
+**何时推送？** 同一场次上次已预约、本次变为绿色可约时，候羽才向飞书发送疑似退订。首次查询和每天北京时间 07:00 正常放号只刷新列表。电脑保持唤醒、联网，关掉窗口后仍可在菜单栏或托盘找到候羽。[详细指南](docs/guide.md)
