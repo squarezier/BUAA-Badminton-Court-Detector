@@ -13,6 +13,7 @@ const SERVER_CHAN_RETRY_DEFAULT = 24 * 60 * 60 * 1000;
 const FEISHU_RETRY_DEFAULT = 60000;
 const FEISHU_REQUEST_LIMIT = 20000;
 const FEISHU_DETAIL_BUDGET = 16000;
+const GROUPS_PER_NOTICE = 18;
 const feishuDay = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric', weekday: 'short',
 });
@@ -66,15 +67,24 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
 
+function* noticeBatches(slots) {
+  const groups = groupSlots(slots);
+  for (let i = 0; i < groups.length; i += GROUPS_PER_NOTICE) {
+    // A complete group has at most 120 validated court numbers. Eighteen such rows
+    // fit inside both the Feishu detail budget and the legacy channel summary.
+    yield groups.slice(i, i + GROUPS_PER_NOTICE).flatMap(({ courts, ...group }) => courts.map(court => ({ ...group, court })));
+  }
+}
+
 function notice(campus, slots, at, targeted = false) {
   const site = CAMPUSES[campus];
   const groups = groupSlots(slots);
-  const details = groups.slice(0, 18).map(group => {
+  const details = groups.slice(0, GROUPS_PER_NOTICE).map(group => {
     const [, month, day] = group.date.split('-');
     const price = group.price ? `¥${group.price}` : '免费';
     return `${Number(month)}月${Number(day)}日 ${group.start}–${group.end} · ${VENUES[group.venue].label} · ${group.courts.join('、')}号 · ${price}`;
   });
-  const more = groups.length > 18 ? `另有 ${groups.length - 18} 个时段，可打开桌面应用查看。` : '';
+  const more = groups.length > GROUPS_PER_NOTICE ? `另有 ${groups.length - GROUPS_PER_NOTICE} 个时段，可打开桌面应用查看。` : '';
   const venues = [...new Set(groups.map(group => group.venue))];
   const links = venues.map(id => `<a href="${venueUrl(id)}">${escapeHtml(VENUES[id].label)}预约页</a>`).join(' · ');
   const markdownLinks = venues.map(id => `[${VENUES[id].label}预约页](${venueUrl(id)})`).join(' · ');
@@ -228,4 +238,4 @@ async function sendPush(connection, message, signal, fetchRequest = fetch) {
   }
 }
 
-module.exports = { notice, testNotice, sendPush };
+module.exports = { notice, noticeBatches, testNotice, sendPush };

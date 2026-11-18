@@ -34,7 +34,7 @@ class Preferences {
         const readable = targets !== null && typeof targets === 'object' && !Array.isArray(targets);
         for (const id of Object.keys(CAMPUSES)) {
           if (readable && !Object.hasOwn(targets, id)) continue;
-          this.options.targets[id] = readable && validTarget(targets[id], id) ? targetFields(targets[id]) : null;
+          this.options.targets[id] = readable && validTarget(targets[id]) ? targetFields(targets[id]) : null;
         }
       }
     }

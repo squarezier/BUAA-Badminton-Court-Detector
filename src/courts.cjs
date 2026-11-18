@@ -71,25 +71,22 @@ function validTime(value) {
   return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function validTarget(target, campus) {
-  if (!target || !Object.hasOwn(CAMPUSES, campus)) return false;
-  const { date, start, end, venue, court } = target;
+function validTarget(target) {
+  if (!target) return false;
+  const { date, start, end } = target;
   if (typeof date !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(date)) return false;
   const day = Date.parse(`${date}T00:00:00+08:00`);
-  return Number.isFinite(day) && beijingDay(day) === date && validTime(start) && validTime(end) && start < end &&
-    (venue === null || CAMPUSES[campus].venues.includes(venue)) &&
-    (court === null || (Number.isInteger(court) && court >= 1 && court <= 120));
+  return Number.isFinite(day) && beijingDay(day) === date && validTime(start) && validTime(end) && start < end;
 }
 
-function targetFields({ date, start, end, venue, court }) {
-  return { date, start, end, venue, court };
+function targetFields({ date, start, end }) {
+  return { date, start, end };
 }
 
 function matchesTarget(slot, target) {
   // A missing target means all reopenings. A damaged saved target mutes this campus until repaired.
   if (target === undefined) return true;
-  return Boolean(target && slot.date === target.date && slot.start >= target.start && slot.end <= target.end &&
-    (target.venue === null || slot.venue === target.venue) && (target.court === null || slot.court === target.court));
+  return Boolean(target && slot.date === target.date && slot.start >= target.start && slot.end <= target.end);
 }
 
 function startsAt({ date, start }) {

@@ -165,7 +165,7 @@ async function run() {
 
   const state = {
     options: { campus: 'shahe', interval: 2, targets: { shahe: {
-      date: '2026-11-20', start: '12:00', end: '16:00', venue: '57', court: 7,
+      date: '2026-11-20', start: '12:00', end: '16:00',
     } } }, auth: 'signed-in', running: true, checking: false,
     suspended: false, nextAt: Date.parse('2026-11-18T14:10:00+08:00'), lastAt: Date.parse('2026-11-18T14:08:00+08:00'), slotCount: 9,
     rows: [
@@ -219,8 +219,8 @@ async function run() {
   assert.deepEqual(await window.webContents.executeJavaScript(`[
     document.querySelector('#page-target').hidden, document.querySelector('#target-date').value,
     document.querySelector('#target-start').value, document.querySelector('#target-end').value,
-    document.querySelector('#target-venue').value, document.querySelector('#target-court').value,
-  ]`), [false, '2026-11-20', '12:00', '16:00', '57', '7']);
+    document.querySelector('#target-coverage').textContent,
+  ]`), [false, '2026-11-20', '12:00', '16:00', '综合馆 · 全部场号']);
   await fs.writeFile(path.join(target, 'target.png'), (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
@@ -233,9 +233,9 @@ async function run() {
   await window.webContents.executeJavaScript("document.querySelector('[data-page=target]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Target editor fits the minimum width');
-  assert.equal(await window.webContents.executeJavaScript(`[...document.querySelectorAll('#target-form input, #target-form select')].every(el => {
+  assert.equal(await window.webContents.executeJavaScript(`[...document.querySelectorAll('#target-form input')].every(el => {
     const rect = el.getBoundingClientRect(); return rect.width >= 82 && rect.left >= 0 && rect.right <= innerWidth;
-  })`), true, 'native date, time and court inputs have usable widths');
+  })`), true, 'native date and time inputs have usable widths');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');

@@ -11,7 +11,7 @@
 [hidden] { display: none !important; }
 body { margin: 0; }
 h1, h2, p, dl, dd { margin: 0; }
-button, input, select { font: inherit; }
+button, input { font: inherit; }
 button { color: inherit; }
 button:not(:disabled), .choice:has(input:not(:disabled)) { cursor: pointer; }
 :focus-visible { outline: 2px solid #3284ce; outline-offset: 3px; }
@@ -132,12 +132,12 @@ legend, .interval-control label { display: block; padding: 0; margin: 0 0 6px; c
 .unit-field { position: relative; }
 .unit-field span { position: absolute; top: 50%; right: 9px; transform: translateY(-50%); color: var(--muted); font-size: 11px; pointer-events: none; }
 .unit-field input { padding-right: 36px; }
-input:not([type=radio]), select {
+input:not([type=radio]) {
   min-width: 0; height: 34px; width: 100%; border: 1px solid #c8d2da; border-radius: 6px; background-color: #fff; color: var(--ink);
   padding: 5px 9px; font-size: 13px; font-variant-numeric: tabular-nums; accent-color: var(--blue); font-weight: 400;
 }
 .unit-field input:not([type=radio]) { padding-right: 34px; }
-input:not([type=radio]):disabled, select:disabled { opacity: .8; }
+input:not([type=radio]):disabled { opacity: .8; }
 input::placeholder { color: #637382; }
 .interval-control p, .field-note { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .interval-control p { margin-top: 6px; }
@@ -164,7 +164,8 @@ tbody tr:hover { background: #f7fafc; }
 .target-editor .card-head, .target-summary .card-head, .push-card .card-head { border-bottom: 1px solid var(--hairline); }
 #target-form { padding: 2px 18px 16px; }
 .form-row { display: grid; grid-template-columns: minmax(60px, .65fr) minmax(0, 2fr); align-items: center; gap: 12px; padding-top: 13px; }
-.form-row label, .push-form label { font-size: 13px; font-weight: 560; }
+.form-row label, .coverage-row > span, .push-form label { font-size: 13px; font-weight: 560; }
+.coverage-row p { color: var(--muted); font-size: 13px; line-height: 1.6; }
 .range-fields { display: flex; align-items: center; gap: 7px; }
 .range-fields span { flex: none; font-size: 11px; color: var(--muted); }
 .range-fields input { flex: 1; width: 0; }

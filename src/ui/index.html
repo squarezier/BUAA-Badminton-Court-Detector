@@ -119,9 +119,7 @@
                 <div class="range-fields"><input id="target-start" type="time" aria-label="开始时间" required><span>至</span><input id="target-end" type="time" aria-label="结束时间" required></div>
               </div>
               <p class="field-note">按北京时间匹配，场次的开始和结束都要在范围内。</p>
-              <div class="form-row"><label for="target-venue">场馆</label><select id="target-venue"></select></div>
-              <div class="form-row"><label for="target-court">场号</label><input id="target-court" type="number" min="1" max="120" step="1" inputmode="numeric" placeholder="不限场号" aria-describedby="court-note"></div>
-              <p class="field-note" id="court-note">留空可接收所选场馆内任意场号的退订。</p>
+              <div class="form-row coverage-row"><span>覆盖场地</span><p id="target-coverage"></p></div>
               <p class="form-error" id="target-error" role="alert" hidden></p>
               <div class="target-actions"><button type="submit" class="button primary" id="save-target">保存目标</button></div>
             </form>

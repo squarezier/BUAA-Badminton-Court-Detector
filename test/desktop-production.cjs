@@ -276,16 +276,14 @@ async function run(win) {
   assert.match(await js("document.querySelector('#target-error').innerText"), /晚于开始/);
   assert.deepEqual((await state()).options.targets, {});
   await js(`document.querySelector('#target-start').value = '07:00';
-    document.querySelector('#target-end').value = '08:00';
-    document.querySelector('#target-venue').value = '39';
-    document.querySelector('#target-court').value = '3'`);
+    document.querySelector('#target-end').value = '08:00'`);
   const draftScan = loads;
   wake();
   await waitFor(view => loads > draftScan && !view.checking && view.nextAt !== null, 'unsubmitted target survives a background scan');
-  assert.equal(await js("document.querySelector('#target-court').value"), '3');
+  assert.equal(await js("document.querySelector('#target-start').value"), '07:00');
   await js("document.querySelector('#target-form').requestSubmit()");
-  const targeted = await waitFor(view => view.options.targets?.xueyuanlu?.court === 3, 'target saved through the form');
-  assert.deepEqual(targeted.options.targets.xueyuanlu, { date: targetDay, start: '07:00', end: '08:00', venue: '39', court: 3 });
+  const targeted = await waitFor(view => view.options.targets?.xueyuanlu?.start === '07:00', 'target saved through the form');
+  assert.deepEqual(targeted.options.targets.xueyuanlu, { date: targetDay, start: '07:00', end: '08:00' });
   assert.deepEqual(JSON.parse(fs.readFileSync(settings, 'utf8')).options.targets, targeted.options.targets);
   assert.equal(storedCiphertext(), feishuCiphertext.toString('base64'));
   assert.equal(pushed.length, 2);
@@ -293,14 +291,15 @@ async function run(win) {
 
   visibleCourts = [1, 2, 3, 4];
   wake();
-  await waitFor(view => view.slotCount === 8 && !view.checking && pushed.length === 3, 'two venues reopen but only matching court reaches Feishu');
-  assert.match(pushed[2].title, /目标场次重新可约.*学院路校区 1 场次/);
+  await waitFor(view => view.slotCount === 8 && !view.checking && pushed.length === 3, 'both venues reopen and all matching courts reach Feishu');
+  assert.match(pushed[2].title, /目标场次重新可约.*学院路校区 2 场次/);
   assert.match(pushed[2].content, /07:00–08:00.*体育馆训练馆[\s\S]*场号 \*\*3 号\*\*/);
-  assert.doesNotMatch(pushed[2].content, /体育馆主馆|venue-reservation\/38/);
+  assert.match(pushed[2].content, /07:00–08:00.*体育馆主馆[\s\S]*场号 \*\*3 号\*\*/);
+  assert.doesNotMatch(pushed[2].content, /综合馆|venue-reservation\/57/);
   for (const [campus, target] of [
     ['shahe', targeted.options.targets.xueyuanlu],
     ['xueyuanlu', { ...targeted.options.targets.xueyuanlu, date: '2000-01-01' }],
-    ['xueyuanlu', { ...targeted.options.targets.xueyuanlu, venue: '57' }],
+    ['xueyuanlu', { ...targeted.options.targets.xueyuanlu, end: '06:59' }],
   ]) {
     await assert.rejects(js(`window.courtWatch.saveTarget(${JSON.stringify(campus)}, ${JSON.stringify(target)})`));
   }
@@ -317,7 +316,7 @@ async function run(win) {
   await click('input[name="campus"][value="xueyuanlu"]');
   await waitFor(view => view.options.campus === 'xueyuanlu', 'target restored for the other campus');
   await click('#open-target');
-  assert.equal(await js("document.querySelector('#target-court').value"), '3');
+  assert.equal(await js("document.querySelector('#target-start').value"), '07:00');
   await click('#clear-target');
   await waitFor(view => !Object.hasOwn(view.options.targets, 'xueyuanlu'), 'clearing the target restores all reopenings without sending');
   assert.equal(await js("document.querySelector('#saved-range').textContent"), '全部退订');

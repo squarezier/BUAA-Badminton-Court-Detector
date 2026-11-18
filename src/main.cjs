@@ -354,7 +354,7 @@ function setupIpc() {
     if (target === null) {
       delete targets[campus];
     } else {
-      if (!validTarget(target, campus)) throw new UserError('请检查目标日期、起止时间、场馆和场号。');
+      if (!validTarget(target)) throw new UserError('请检查目标日期和起止时间。');
       if (Date.parse(`${target.date}T${target.end}:00+08:00`) <= Date.now()) throw new UserError('请选择尚未结束的北京时间段。');
       targets[campus] = targetFields(target);
     }

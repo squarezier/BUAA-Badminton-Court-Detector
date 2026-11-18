@@ -1,7 +1,7 @@
 'use strict';
 
 const { CAMPUSES, VENUES, groupSlots, matchesTarget, nextBookingRelease, slotKey, startsAt } = require('./courts.cjs');
-const { notice } = require('./push.cjs');
+const { notice, noticeBatches } = require('./push.cjs');
 
 class UserError extends Error {
   constructor(message, code = 'general') {
@@ -175,13 +175,22 @@ class CourtMonitor {
   async notifyPending(failedVenues, signal) {
     const pending = this.pending;
     const now = this.now();
-    const batch = [];
+    const candidates = [];
     for (const [key, slot] of pending) {
       if (startsAt(slot) <= now || !matchesTarget(slot, this.target)) pending.delete(key);
-      else if (!failedVenues.has(slot.venue)) batch.push(slot);
+      else if (!failedVenues.has(slot.venue)) candidates.push(slot);
     }
-    if (!batch.length || signal.aborted || !this.delivery.configured ||
+    if (!candidates.length || signal.aborted || !this.delivery.configured ||
         this.delivery.status === 'blocked' || now < this.pushNotBefore) return;
+    for (const part of noticeBatches(candidates)) {
+      if (signal.aborted || this.pending !== pending) return;
+      const at = this.now();
+      const batch = part.filter(slot => pending.has(slotKey(slot)) && startsAt(slot) > at);
+      if (batch.length && !await this.sendBatch(batch, pending, signal, at)) return;
+    }
+  }
+
+  async sendBatch(batch, pending, signal, now) {
     // After dispatch, an interrupted request may already have been accepted.
     for (const slot of batch) pending.delete(slotKey(slot));
     const eligible = new Map(batch.map(slot => [slotKey(slot), slot]));
@@ -195,11 +204,12 @@ class CourtMonitor {
       this.inFlightSlots = new Map();
     }
     // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
-    if (this.pending !== pending) return;
+    if (this.pending !== pending) return false;
     if (result.kind === 'retry' || result.kind === 'blocked') {
       for (const [key, slot] of eligible) if (startsAt(slot) > this.now()) pending.set(key, slot);
     }
     this.recordDelivery(result);
+    return result.kind === 'accepted';
   }
 
   async check() {

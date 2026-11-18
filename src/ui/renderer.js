@@ -70,15 +70,16 @@ function renderTarget(options, venues, now) {
   const endsAt = target ? Date.parse(`${target.date}T${target.end}:00+08:00`) : 0;
   const expired = Boolean(target && endsAt <= now);
   const campus = campusNames[options.campus];
+  const coverage = `${venues.map(item => item.label).join('、')} · 全部场号`;
+  text('target-coverage', coverage);
   let range = '全部退订';
   let place = '此校区的所有时段和场号';
   let note = '可以提前设定未来的日期。保存后，只有符合目标的场次重新可约时才会提醒。';
   if (target) {
-    const venue = venues.find(item => item.id === target.venue)?.label ?? '全部场馆';
     const year = target.date.slice(0, 4);
     const yearLabel = year === isoDay.format(now).slice(0, 4) ? '' : `${year}年`;
     range = `${yearLabel}${shortDay(target.date)}${expired ? ' · 已结束' : ''}`;
-    place = `${target.start}–${target.end}\n${venue} · ${target.court === null ? '不限场号' : `${target.court} 号场`}`;
+    place = `${target.start}–${target.end}\n${coverage}`;
     note = expired ? '此目标已到期，提醒已静默。可以选择新的日期或移除目标。' : '目标仅用于退订推送，场地监控仍显示全校区的绿色空场。';
   } else if (target === null) {
     range = '目标需要重新设置';
@@ -99,9 +100,6 @@ function renderTarget(options, venues, now) {
     get('target-date').value = target?.date ?? isoDay.format(now + 86400000);
     get('target-start').value = target?.start ?? '18:00';
     get('target-end').value = target?.end ?? '20:00';
-    get('target-venue').replaceChildren(new Option('全部场馆', ''), ...venues.map(venue => new Option(venue.label, venue.id)));
-    get('target-venue').value = target?.venue ?? '';
-    get('target-court').value = target?.court ?? '';
     get('target-error').hidden = true;
   }
   for (const control of get('target-form').elements) control.disabled = busy;
@@ -115,13 +113,12 @@ function submitTarget(event) {
   const date = get('target-date').value;
   const start = get('target-start').value;
   const end = get('target-end').value;
-  const court = get('target-court');
   const error = get('target-error');
   const showError = message => { error.textContent = message; error.hidden = false; };
   if (start >= end) { showError('结束时间需要晚于开始时间。'); get('target-end').focus(); return; }
   if (Date.parse(`${date}T${end}:00+08:00`) <= Date.now()) { showError('请选择尚未结束的北京时间段。'); return; }
   const campus = current.options.campus;
-  const target = { date, start, end, venue: get('target-venue').value || null, court: court.value === '' ? null : court.valueAsNumber };
+  const target = { date, start, end };
   void act(async () => {
     try {
       await app.saveTarget(campus, target);

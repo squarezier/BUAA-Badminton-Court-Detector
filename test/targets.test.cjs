@@ -8,9 +8,10 @@ const { tmpdir } = require('node:os');
 const { CourtMonitor } = require('../src/monitor.cjs');
 const { validTarget, matchesTarget, slotKey } = require('../src/courts.cjs');
 const { Preferences } = require('../src/preferences.cjs');
+const { notice, noticeBatches } = require('../src/push.cjs');
 
 const day = '2028-02-29';
-const rule = { date: day, start: '18:00', end: '20:00', venue: '39', court: 19 };
+const rule = { date: day, start: '18:00', end: '20:00' };
 const slot = (overrides = {}) => ({
   venue: '39', court: 19, date: day, start: '18:00', end: '19:00', price: 25, ...overrides,
 });
@@ -40,24 +41,22 @@ function rig(t, dispatch, target = rule) {
   };
 }
 
-test('target dates, times, venue and optional court are validated for the selected campus', () => {
-  assert.ok(validTarget(rule, 'xueyuanlu'));
-  assert.ok(validTarget({ ...rule, venue: null, court: null }, 'shahe'));
+test('target dates and clock ranges are validated', () => {
+  assert.ok(validTarget(rule));
   for (const delta of [
     { date: '2027-02-29' }, { date: '2028-02-30' }, { date: '2028-2-29' }, { date: 'invalid' },
     { start: '18:60' }, { start: '9:00' }, { start: '20:00' }, { end: '17:59' }, { end: '24:00' },
-    { venue: '57' }, { venue: 39 }, { court: 0 }, { court: 121 }, { court: 1.5 }, { court: '19' },
-  ]) assert.equal(validTarget({ ...rule, ...delta }, 'xueyuanlu'), false, JSON.stringify(delta));
+  ]) assert.equal(validTarget({ ...rule, ...delta }), false, JSON.stringify(delta));
 });
 
-test('whole booking slots must fit the date, closed interval, venue and court boundaries', () => {
+test('whole slots must fit the date and time boundaries at every court in the monitored campus', () => {
   assert.equal(matchesTarget(slot({ end: '20:00' }), rule), true);
   assert.equal(matchesTarget(slot({ start: '19:00', end: '20:00' }), rule), true);
   for (const delta of [
-    { start: '17:59' }, { end: '20:01' }, { date: '2028-03-01' }, { venue: '38' }, { court: 18 },
+    { start: '17:59' }, { end: '20:01' }, { date: '2028-03-01' },
     { start: '20:00', end: '21:00' },
   ]) assert.equal(matchesTarget(slot(delta), rule), false);
-  assert.equal(matchesTarget(slot({ venue: '38', court: 73 }), { ...rule, venue: null, court: null }), true);
+  assert.equal(matchesTarget(slot({ venue: '38', court: 73 }), rule), true);
   assert.equal(matchesTarget(slot(), undefined), true);
   assert.equal(matchesTarget(slot(), null), false);
 });
@@ -71,10 +70,11 @@ test('a mixed two-venue reopening sends just the matching courts and leaves the 
   await r.sample([...candidates, release]);
   assert.equal(r.monitor.state().slotCount, 6);
   assert.equal(messages.length, 1);
-  assert.match(messages[0].title, /目标场次重新可约.*学院路校区 1 场次/);
+  assert.match(messages[0].title, /目标场次重新可约.*学院路校区 3 场次/);
   const card = JSON.stringify(messages[0].feishuCard);
-  assert.match(card, /18:00–19:00.*体育馆训练馆.*19 号/);
-  assert.doesNotMatch(card, /体育馆主馆|18 号|19:00–20:00|3月1日/);
+  assert.match(card, /18:00–19:00 · 体育馆主馆.*19 号/);
+  assert.match(card, /18:00–19:00 · 体育馆训练馆.*18、19 号/);
+  assert.doesNotMatch(card, /17:00–18:00|19:00–20:00|3月1日|综合馆/);
   await r.sample([...candidates, release]);
   assert.equal(messages.length, 1);
   await r.sample([], [slot()]);
@@ -85,7 +85,7 @@ test('a mixed two-venue reopening sends just the matching courts and leaves the 
 test('widening a target or removing it does not turn existing green courts into an alert', async t => {
   const messages = [];
   const r = rig(t, async message => { messages.push(message); return accepted; });
-  const other = slot({ court: 18 });
+  const other = slot({ court: 18, start: '17:00', end: '18:00' });
   await r.sample([], [other]);
   await r.sample([other]);
   r.setRule(undefined);
@@ -121,13 +121,13 @@ test('narrowing a rule during delivery keeps only still eligible retries, even i
     messages.push(message);
     if (messages.length === 1) { entered.resolve(); return limited.promise; }
     return accepted;
-  }, { ...rule, court: null });
-  const courts = [slot(), slot({ court: 18 })];
+  });
+  const courts = [slot(), slot({ court: 18, start: '19:00', end: '20:00' })];
   await r.sample([], courts);
   const inFlight = r.sample(courts);
   await entered.promise;
+  r.setRule({ ...rule, end: '19:00' });
   r.setRule(rule);
-  r.setRule({ ...rule, court: null });
   limited.resolve({ kind: 'retry', text: 'rate-limited', retryAfterMs: 60000 });
   await inFlight;
   assert.deepEqual([...r.monitor.pending.keys()], [slotKey(courts[0])]);
@@ -153,6 +153,45 @@ test('pending notifications follow live edits and expiry never falls back to all
   assert.equal(r.monitor.state().slotCount, 1);
 });
 
+test('all reopened groups reach Feishu across cards, without repeating an accepted card after a rate limit', async t => {
+  const acceptedGroups = [];
+  let attempts = 0;
+  const r = rig(t, async message => {
+    if (++attempts === 2) return { kind: 'retry', text: 'limited', retryAfterMs: 1000 };
+    const card = JSON.stringify(message.feishuCard);
+    assert.doesNotMatch(card, /另有/);
+    acceptedGroups.push(...[...card.matchAll(/(18:\d\d)–18:\d\d · /g)].map(match => match[1]));
+    return accepted;
+  });
+  const clock = minute => '18:' + String(minute).padStart(2, '0');
+  const candidates = Array.from({ length: 40 }, (_, i) => slot({ start: clock(i), end: clock(i + 1) }));
+  await r.sample([], candidates);
+  await r.sample(candidates);
+  assert.equal(attempts, 2);
+  assert.equal(r.monitor.pending.size, 22);
+  r.setTime(initialTime + 1000);
+  await r.sample(candidates);
+  assert.equal(attempts, 4);
+  assert.deepEqual(acceptedGroups, candidates.map(item => item.start));
+  assert.equal(r.monitor.pending.size, 0);
+});
+
+test('saturated cards preserve complete court lists and fit the signed webhook payload', () => {
+  const crowded = Array.from({ length: 36 }, (_, minute) => Array.from({ length: 120 }, (_, i) =>
+    slot({ start: '18:' + String(minute).padStart(2, '0'), end: '19:01', court: i + 1, price: 9998.99999999999 })
+  )).flat();
+  const batches = [...noticeBatches(crowded)];
+  assert.equal(batches.length, 2);
+  assert.equal(batches.flat().length, crowded.length);
+  for (const part of batches) {
+    const card = notice('xueyuanlu', part, initialTime, true).feishuCard;
+    const body = JSON.stringify({ msg_type: 'interactive', card, timestamp: '9999999999', sign: 'A'.repeat(44) });
+    assert.ok(Buffer.byteLength(body) <= 20000);
+    assert.doesNotMatch(body, /另有/);
+    assert.equal([...body.matchAll(/119、120 号/g)].length, 18);
+  }
+});
+
 test('preferences migrate older files and restore each campus target independently', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'houyu-targets-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -162,7 +201,7 @@ test('preferences migrate older files and restore each campus target independent
   const old = new Preferences(file, {});
   await old.load();
   assert.deepEqual(old.options, { ...legacy, targets: {} });
-  const targets = { shahe: { ...rule, venue: '57', court: 2 }, xueyuanlu: rule };
+  const targets = { shahe: { ...rule, start: '07:00', end: '09:00' }, xueyuanlu: rule };
   await old.saveOptions({ ...legacy, targets });
   const next = new Preferences(file, {});
   await next.load();
