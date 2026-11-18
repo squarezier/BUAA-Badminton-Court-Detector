@@ -163,17 +163,20 @@ function render() {
     text('empty-note', note);
   }
 
-  const pushStatus = delivery.status === 'blocked' ? '需检查配置' : delivery.configured ? '已配置' : '未配置';
-  const legacyPush = current.pushService === 'PushPlus';
-  text('push-service', legacyPush ? '当前使用 PushPlus。导入 SendKey 可切换到 Server酱。' : 'Server酱 Turbo 免费版每天可推送 5 条。');
-  text('sample-source', legacyPush ? 'PushPlus 推送加' : 'Server酱服务号');
+  const legacyService = { pushplus: 'PushPlus', serverchan: 'Server酱' }[current.pushService];
+  const pushStatus = legacyService ? '待切换' : delivery.status === 'blocked' ? '需检查配置' : delivery.configured ? '已连接' : '未连接';
+  get('push-service').hidden = !legacyService;
+  text('push-service', legacyService ? `当前使用 ${legacyService}。飞书测试通过后切换。` : '');
   text('push-status', pushStatus);
-  get('push-status').dataset.tone = delivery.status === 'blocked' ? 'warn' : delivery.configured ? 'good' : 'neutral';
+  get('push-status').dataset.tone = delivery.status === 'blocked' ? 'warn' : delivery.configured && !legacyService ? 'good' : 'neutral';
   get('storage-note').hidden = !delivery.configured || delivery.persistent;
   get('push-connect').disabled = busy;
+  get('feishu-webhook').disabled = busy;
+  get('feishu-secret').disabled = busy;
   get('push-actions').hidden = !delivery.configured;
   get('push-test').disabled = busy || !delivery.configured;
-  get('remove-token').disabled = busy;
+  text('push-test', legacyService ? '测试当前渠道' : '再次发送测试');
+  get('remove-connection').disabled = busy;
   get('push-feedback').hidden = !pushError && !delivery.text;
   get('push-feedback').dataset.tone = pushError || ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : 'neutral';
   const deliveryNote = delivery.at ? `${time.format(delivery.at)} · ${delivery.text}` : delivery.text;
@@ -212,10 +215,14 @@ if (!app) {
   for (const input of document.querySelectorAll('input[name="campus"]')) {
     input.addEventListener('change', () => { if (input.checked && current) void updateOptions({ campus: input.value }); });
   }
-  get('push-setup').addEventListener('click', () => act(() => app.pushSetup()));
   get('push-guide').addEventListener('click', () => act(() => app.pushGuide()));
-  get('push-connect').addEventListener('click', () => runPushAction(app.connectPush));
-  get('remove-token').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('微信推送密钥已移除。'); }));
+  get('push-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value };
+    void runPushAction(async () => { await app.connectPush(connection); form.reset(); });
+  });
+  get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); showToast('通知连接已断开。'); }));
   get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));

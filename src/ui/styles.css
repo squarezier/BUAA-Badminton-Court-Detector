@@ -164,10 +164,18 @@ tbody tr:hover { background: #f8fbff; }
 .push-body { border-top: 1px solid var(--line); padding: 14px 17px 18px; }
 .push-links, .push-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .push-instructions { color: var(--muted); font-size: 13px; line-height: 1.6; }
-.push-links { margin-top: 13px; }
+.push-form { display: grid; gap: 12px; margin-top: 14px; }
+.push-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 690; }
+.push-form label small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.push-form input {
+  width: 100%; min-width: 0; min-height: 36px; padding: 6px 9px; border: 1px solid #c9d8e8;
+  border-radius: 6px; color: var(--ink); background: var(--paper); font-weight: 400;
+}
+.push-form input::placeholder { color: var(--muted); }
 .push-actions { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .push-body .quiet { font-size: 12px; }
-#storage-note, #import-note, .feedback { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 8px; }
+#connect-note, #storage-note, .feedback { color: var(--muted); font-size: 12px; line-height: 1.5; }
+#storage-note, .feedback { margin-top: 8px; }
 .feedback[data-tone="warn"] { color: var(--warm); }
 .message-sample {
   display: grid; gap: 8px; padding: 13px 14px; margin: 0 16px;

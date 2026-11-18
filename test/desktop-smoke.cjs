@@ -115,7 +115,7 @@ async function run() {
       { date: '2026-11-20', start: '14:00', end: '15:00', venue: '57', courts: [4, 5, 7, 8], price: 15 },
     ],
     venues: [{ id: '57', label: '综合馆', dates: ['2026-11-18', '2026-11-19', '2026-11-20'], at: 1, error: '' }],
-    delivery: { configured: true, persistent: true, status: 'ready', text: '', at: null },
+    delivery: { configured: true, persistent: true, status: 'ready', text: '', at: null }, pushService: 'feishu',
   };
   ipcMain.handle('courtwatch:state', () => ({ ok: true, value: state }));
   ipcMain.handle('courtwatch:start', event => {
@@ -155,14 +155,14 @@ async function run() {
   assert.equal(await sideBySide(), true, 'Monitoring settings sit beside the results at the default width');
   await paint();
   await fs.writeFile(path.join(target, 'monitor.png'), (await window.webContents.capturePage()).toPNG());
-  await window.webContents.executeJavaScript("document.querySelector('[data-page=wechat]').click()");
+  await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
-  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#page-wechat').hidden"), false);
-  await fs.writeFile(path.join(target, 'wechat.png'), (await window.webContents.capturePage()).toPNG());
+  assert.equal(await window.webContents.executeJavaScript("document.querySelector('#page-feishu').hidden"), false);
+  await fs.writeFile(path.join(target, 'feishu.png'), (await window.webContents.capturePage()).toPNG());
   window.setSize(760, 630);
   await paint();
   const viewportFit = () => window.webContents.executeJavaScript('innerWidth === 760 && document.documentElement.scrollWidth <= innerWidth');
-  assert.equal(await viewportFit(), true, 'WeChat page fits the minimum width');
+  assert.equal(await viewportFit(), true, 'Feishu page fits the minimum width');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');

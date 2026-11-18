@@ -1,6 +1,7 @@
 'use strict';
 
-const { CAMPUSES, VENUES, venueUrl, groupSlots, beijingClock, parseToken } = require('./courts.cjs');
+const { createHmac } = require('node:crypto');
+const { CAMPUSES, VENUES, venueUrl, groupSlots, beijingClock } = require('./courts.cjs');
 const { productName } = require('../package.json');
 
 const PUSH_URL = 'https://www.pushplus.plus/send';
@@ -8,11 +9,16 @@ const SERVER_CHAN_ORIGIN = 'https://sctapi.ftqq.com';
 const PUSH_RESPONSE_LIMIT = 65536;
 const PUSH_RETRY_DEFAULT = 120000;
 const SERVER_CHAN_RETRY_DEFAULT = 24 * 60 * 60 * 1000;
+const FEISHU_RETRY_DEFAULT = 60000;
+const FEISHU_ERRORS = {
+  19001: '飞书 Webhook 无效，请在群机器人设置里重新复制。',
+  19021: '飞书签名校验失败，请核对签名密钥和电脑时间。',
+  19022: '飞书拒绝了当前网络，请核对机器人 IP 白名单。',
+  19024: '飞书关键词校验失败，请在机器人关键词中加入「候羽」。',
+  9499: '飞书拒绝了消息格式，请检查机器人配置。',
+};
 
-function serverChanKey(value) {
-  const token = parseToken(value);
-  return token?.startsWith('SCT') ? token : null;
-}
+const textLine = text => [{ tag: 'text', text }];
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -30,21 +36,24 @@ function notice(campus, slots, at) {
   const venues = [...new Set(groups.map(group => group.venue))];
   const links = venues.map(id => `<a href="${venueUrl(id)}">${escapeHtml(VENUES[id].label)}预约页</a>`).join(' · ');
   const markdownLinks = venues.map(id => `[${VENUES[id].label}预约页](${venueUrl(id)})`).join(' · ');
-  const heading = `${beijingClock(at)}（北京时间）发现以下空场：`;
+  const heading = `${productName}于 ${beijingClock(at)}（北京时间）发现以下空场。`;
   const footer = '余量随时变化，请以预约页为准。';
+  const feishuLinks = venues.map(id => [{ tag: 'a', text: `${VENUES[id].label}预约页`, href: venueUrl(id) }]);
   return {
     title: `${productName}｜${site.label}新增 ${slots.length} 场次`,
     content: `<p>${escapeHtml(heading)}</p><ul>${details.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>${more ? `<p>${more}</p>` : ''}<p>${links}</p><p>${footer}</p>`,
     markdown: [heading, details.map(line => `- ${line}`).join('\n'), more, markdownLinks, footer].filter(Boolean).join('\n\n'),
+    feishu: [...[heading, ...details, more].filter(Boolean).map(textLine), ...feishuLinks, textLine(footer)],
   };
 }
 
 function testNotice(at) {
-  const text = `${beijingClock(at)}（北京时间）发起了一条测试。收到这条消息，表示微信服务号可接收场地提醒。`;
+  const text = `${beijingClock(at)}（北京时间）发起了一条测试。收到这条消息后，即可通过此渠道接收候羽的空场提醒。`;
   return {
     title: `${productName}｜测试提醒`,
     content: `<p>${escapeHtml(text)}</p>`,
     markdown: text,
+    feishu: [textLine(text)],
   };
 }
 
@@ -81,25 +90,63 @@ function serverChanResult(code) {
   return { kind: 'unknown', text: 'Server酱返回异常，送达状态待确认。' };
 }
 
-async function sendPush(token, message, signal, fetchRequest = fetch) {
-  const serverChan = Boolean(serverChanKey(token));
-  const service = serverChan ? 'Server酱' : 'PushPlus';
-  const endpoint = serverChan ? `${SERVER_CHAN_ORIGIN}/${encodeURIComponent(token)}.send` : PUSH_URL;
-  const body = serverChan
-    ? new URLSearchParams({ title: message.title, desp: message.markdown, noip: '1' })
-    : JSON.stringify({ token, title: message.title, content: message.content, template: 'html', channel: 'wechat' });
+function feishuResult(response, data) {
+  const code = data?.code;
+  const legacySuccess = code === undefined && data?.StatusCode === 0 && data.StatusMessage === 'success';
+  if (response.ok && (code === 0 || legacySuccess)) return { kind: 'accepted', text: '飞书已受理，请在群里确认消息。' };
+  if (code === 11232) {
+    const retryAfterMs = retryDelay(response.headers.get('retry-after'), FEISHU_RETRY_DEFAULT);
+    return { kind: 'retry', retryAfterMs, text: '飞书暂时限流，将延后重试。' };
+  }
+  if ((Number.isSafeInteger(code) && code !== 0) || [400, 401, 403, 404, 410].includes(response.status)) {
+    return { kind: 'blocked', text: FEISHU_ERRORS[code] ?? '飞书拒绝发送，请核对 Webhook 和机器人的安全设置。' };
+  }
+  return { kind: 'unknown', text: '飞书返回异常，送达状态待确认。' };
+}
+
+function pushRequest(connection, message) {
+  const json = { 'content-type': 'application/json; charset=utf-8' };
+  if (connection.provider === 'feishu') {
+    const payload = { msg_type: 'post', content: { post: { zh_cn: { title: message.title, content: message.feishu } } } };
+    if (connection.secret) {
+      payload.timestamp = String(Math.floor(Date.now() / 1000));
+      payload.sign = createHmac('sha256', `${payload.timestamp}\n${connection.secret}`).digest('base64');
+    }
+    return { endpoint: connection.webhook, headers: json, body: JSON.stringify(payload) };
+  }
+  if (connection.provider === 'serverchan') {
+    const endpoint = `${SERVER_CHAN_ORIGIN}/${encodeURIComponent(connection.token)}.send`;
+    return { endpoint, body: new URLSearchParams({ title: message.title, desp: message.markdown, noip: '1' }) };
+  }
+  const body = JSON.stringify({ token: connection.token, title: message.title, content: message.content, template: 'html', channel: 'wechat' });
+  return { endpoint: PUSH_URL, headers: json, body };
+}
+
+async function sendPush(connection, message, signal, fetchRequest = fetch) {
+  const feishu = connection.provider === 'feishu';
+  const serverChan = connection.provider === 'serverchan';
+  const service = feishu ? '飞书' : serverChan ? 'Server酱' : 'PushPlus';
   try {
+    const { endpoint, headers, body } = pushRequest(connection, message);
+    if (feishu && Buffer.byteLength(body) > 20000) {
+      return { kind: 'blocked', text: '提醒超过飞书消息大小限制，请在候羽查看当前空场。' };
+    }
     const timeout = AbortSignal.timeout(12000);
     const response = await fetchRequest(endpoint, {
       method: 'POST', redirect: 'error', cache: 'no-store',
-      headers: serverChan ? undefined : { 'content-type': 'application/json; charset=utf-8' },
+      headers,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       body,
     });
+    if (feishu && response.status !== 429 && response.status < 500) {
+      const data = await readSmallJson(response).catch(() => null);
+      if (signal?.aborted) return { kind: 'cancelled' };
+      return feishuResult(response, data);
+    }
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
       if (response.status === 429) {
-        const fallback = serverChan ? SERVER_CHAN_RETRY_DEFAULT : PUSH_RETRY_DEFAULT;
+        const fallback = feishu ? FEISHU_RETRY_DEFAULT : serverChan ? SERVER_CHAN_RETRY_DEFAULT : PUSH_RETRY_DEFAULT;
         return { kind: 'retry', retryAfterMs: retryDelay(response.headers.get('retry-after'), fallback), text: `${service}请求过于频繁，将延后重试。` };
       }
       if (response.status === 401 || response.status === 403) return { kind: 'blocked', text: `${service}拒绝了请求，请核对密钥和微信配置。` };
@@ -122,4 +169,4 @@ async function sendPush(token, message, signal, fetchRequest = fetch) {
   }
 }
 
-module.exports = { notice, testNotice, sendPush, serverChanKey };
+module.exports = { notice, testNotice, sendPush };

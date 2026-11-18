@@ -22,9 +22,8 @@ contextBridge.exposeInMainWorld('courtWatch', Object.freeze({
   start: () => invoke('start'),
   pause: () => invoke('pause'),
   saveOptions: options => invoke('options', options),
-  connectPush: () => invoke('push-connect'),
+  connectPush: connection => invoke('push-connect', connection),
   testPush: () => invoke('push-test'),
   disconnectPush: () => invoke('push-disconnect'),
   pushGuide: () => invoke('push-guide'),
-  pushSetup: () => invoke('push-setup'),
 }));

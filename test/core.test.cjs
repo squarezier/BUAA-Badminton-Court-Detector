@@ -7,6 +7,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { validatedSnapshot, calendarDates } = require('../src/courts.cjs');
 const { sendPush, notice } = require('../src/push.cjs');
+const { feishuConnection, decodePushConnection } = require('../src/push-connection.cjs');
 const { CourtMonitor, UserError } = require('../src/monitor.cjs');
 const { Preferences } = require('../src/preferences.cjs');
 
@@ -85,6 +86,7 @@ test('an expired session stops polling and never sends a notification', async ()
 });
 
 test('PushPlus uses an HTTPS POST and treats acceptance as separate from delivery', async () => {
+  const connection = decodePushConnection('mock-token-not-real');
   const adapter = async (url, request) => {
     assert.equal(url, 'https://www.pushplus.plus/send');
     assert.equal(request.method, 'POST');
@@ -92,13 +94,14 @@ test('PushPlus uses an HTTPS POST and treats acceptance as separate from deliver
     assert.equal(JSON.parse(request.body).channel, 'wechat');
     return new Response(JSON.stringify({ code: 200 }));
   };
-  assert.equal((await sendPush('mock-token-not-real', { title: 'test', content: 'test' }, undefined, adapter)).kind, 'accepted');
+  assert.equal((await sendPush(connection, { title: 'test', content: 'test' }, undefined, adapter)).kind, 'accepted');
   const rejected = async () => new Response(JSON.stringify({ code: 905 }));
-  assert.equal((await sendPush('mock-token-not-real', { title: 'test', content: 'test' }, undefined, rejected)).kind, 'blocked');
+  assert.equal((await sendPush(connection, { title: 'test', content: 'test' }, undefined, rejected)).kind, 'blocked');
 });
 
 test('ServerChan sends markdown over HTTPS and handles throttling without blind retries', async () => {
   const key = 'SCTmock-test-token-12345';
+  const connection = decodePushConnection(key);
   const message = notice('shahe', [slot(3), slot(5)], now);
   const adapter = async (url, request) => {
     assert.equal(url, `https://sctapi.ftqq.com/${key}.send`);
@@ -109,26 +112,109 @@ test('ServerChan sends markdown over HTTPS and handles throttling without blind 
     assert.match(request.body.get('desp'), /\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/);
     return Response.json({ code: 0 });
   };
-  assert.equal((await sendPush(key, message, undefined, adapter)).kind, 'accepted');
+  assert.equal((await sendPush(connection, message, undefined, adapter)).kind, 'accepted');
   const limited = async () => new Response('', { status: 429 });
-  const delayed = await sendPush(key, message, undefined, limited);
+  const delayed = await sendPush(connection, message, undefined, limited);
   assert.equal(delayed.kind, 'retry');
   assert.equal(delayed.retryAfterMs, 86400000);
   const rejected = async () => Response.json({ code: 40001 });
-  assert.equal((await sendPush(key, message, undefined, rejected)).kind, 'blocked');
+  assert.equal((await sendPush(connection, message, undefined, rejected)).kind, 'blocked');
 });
 
-test('an unavailable OS vault leaves the PushPlus token in memory only', async t => {
+const webhook = 'https://open.feishu.cn/open-apis/bot/v2/hook/11111111-2222-4333-8444-555555555555';
+
+test('Feishu accepts only the official HTTPS webhook path', () => {
+  assert.deepEqual(feishuConnection({ webhook: ` ${webhook}\n` }), { provider: 'feishu', webhook, secret: '' });
+  for (const invalid of [
+    webhook.replace('https:', 'http:'),
+    webhook.replace('open.feishu.cn', 'open.feishu.cn.example.invalid'),
+    webhook.replace('open.feishu.cn', 'open.feishu.cn@example.invalid'),
+    webhook.replace('open.feishu.cn', 'open.feishu.cn:443'),
+    webhook.replace('/v2/', '/v1/'),
+    webhook + '?test=1',
+    webhook + '#test',
+    webhook + '/../elsewhere',
+  ]) assert.equal(feishuConnection({ webhook: invalid }), null);
+  assert.equal(feishuConnection({ webhook, secret: 'first\nsecond' }), null);
+});
+
+test('Feishu sends a signed group post with the official booking link', async t => {
+  t.mock.method(Date, 'now', () => 1599360473000);
+  const connection = feishuConnection({ webhook, secret: 'demo' });
+  const message = notice('shahe', [slot(3), slot(5)], now);
+  const adapter = async (url, request) => {
+    assert.equal(url, webhook);
+    assert.equal(request.method, 'POST');
+    assert.equal(request.redirect, 'error');
+    const payload = JSON.parse(request.body);
+    assert.equal(payload.timestamp, '1599360473');
+    assert.equal(payload.sign, 'l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=');
+    assert.doesNotMatch(request.body, /demo/);
+    assert.equal(payload.msg_type, 'post');
+    const { title, content } = payload.content.post.zh_cn;
+    assert.equal(title, '候羽｜沙河校区新增 2 场次');
+    assert.ok(content.flat().some(node => node.tag === 'text' && node.text.includes('3、5号')));
+    assert.deepEqual(content.flat().filter(node => node.tag === 'a'), [
+      { tag: 'a', text: '综合馆预约页', href: 'https://cgyy.buaa.edu.cn/venue/venue-reservation/57' },
+    ]);
+    return Response.json({ code: 0 });
+  };
+  assert.equal((await sendPush(connection, message, undefined, adapter)).kind, 'accepted');
+});
+
+test('Feishu distinguishes rejections, throttling and uncertain delivery', async () => {
+  const connection = feishuConnection({ webhook });
+  const message = notice('shahe', [slot(5)], now);
+  const send = response => sendPush(connection, message, undefined, async (_url, request) => {
+    const payload = JSON.parse(request.body);
+    assert.ok(!Object.hasOwn(payload, 'timestamp') && !Object.hasOwn(payload, 'sign'));
+    return response;
+  });
+  assert.equal((await send(Response.json({ StatusCode: 0, StatusMessage: 'success' }))).kind, 'accepted');
+  assert.equal((await send(Response.json({ code: 19021 }, { status: 400 }))).kind, 'blocked');
+  assert.equal((await send(Response.json({ code: 19024 }))).kind, 'blocked');
+  assert.equal((await send(Response.json({ code: 11232 }))).retryAfterMs, 60000);
+  assert.equal((await send(new Response('', { status: 429, headers: { 'retry-after': '90' } }))).retryAfterMs, 90000);
+  assert.equal((await send(new Response('<html>', { status: 502 }))).kind, 'unknown');
+  assert.equal((await send(Response.json({ code: 0 }, { status: 400 }))).kind, 'blocked');
+});
+
+test('a Feishu connection is sealed and survives reload', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'courtwatch-config-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'settings.json');
+  const connection = feishuConnection({ webhook, secret: 'synthetic-signing-key' });
+  const ciphertext = Buffer.from('sealed-by-test-vault');
+  let plaintext;
+  const vault = {
+    async isAsyncEncryptionAvailable() { return true; },
+    async encryptStringAsync(value) { plaintext = value; return ciphertext; },
+    async decryptStringAsync(value) { assert.deepEqual(value, ciphertext); return { result: plaintext }; },
+  };
+  const store = new Preferences(file, vault);
+  assert.equal(await store.saveConnection(connection), true);
+  const saved = await readFile(file, 'utf8');
+  assert.doesNotMatch(saved, /feishu\.cn|synthetic-signing-key/);
+  const reopened = new Preferences(file, vault);
+  await reopened.load();
+  assert.deepEqual(reopened.connection, connection);
+  vault.isAsyncEncryptionAvailable = async () => false;
+  await assert.rejects(reopened.saveConnection(feishuConnection({ webhook })));
+  assert.equal(await readFile(file, 'utf8'), saved);
+  assert.deepEqual(reopened.connection, connection);
+});
+
+test('an unavailable OS vault leaves a new connection in memory only', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'courtwatch-config-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, 'settings.json');
   const store = new Preferences(file, { async isAsyncEncryptionAvailable() { return false; } });
   await store.load();
-  const secret = 'mock-test-token-12345';
-  assert.equal(await store.saveToken(secret), false);
-  assert.equal(store.token, secret);
-  assert.doesNotMatch(await readFile(file, 'utf8'), /mock-test/);
+  const connection = feishuConnection({ webhook, secret: 'mock-test-signing-key' });
+  assert.equal(await store.saveConnection(connection), false);
+  assert.deepEqual(store.connection, connection);
+  assert.doesNotMatch(await readFile(file, 'utf8'), /feishu\.cn|mock-test/);
   const reopened = new Preferences(file, { async isAsyncEncryptionAvailable() { return false; } });
   await reopened.load();
-  assert.equal(reopened.token, null);
+  assert.equal(reopened.connection, null);
 });

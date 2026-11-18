@@ -3,14 +3,15 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
-const { validOptions, parseToken } = require('./courts.cjs');
+const { validOptions } = require('./courts.cjs');
+const { decodePushConnection, encodePushConnection } = require('./push-connection.cjs');
 
 class Preferences {
   constructor(file, storage) {
     this.file = file;
     this.storage = storage;
     this.options = { campus: 'shahe', interval: 2 };
-    this.token = null;
+    this.connection = null;
     this.encrypted = null;
     this.warning = '';
     this.writing = Promise.resolve();
@@ -33,20 +34,20 @@ class Preferences {
     try {
       if (!await this.storage.isAsyncEncryptionAvailable()) throw new Error('OS encryption unavailable');
       plain = await this.storage.decryptStringAsync(Buffer.from(this.encrypted, 'base64'));
-      this.token = parseToken(plain.result);
-      if (!this.token) throw new Error('Invalid stored push token');
+      this.connection = decodePushConnection(plain.result);
+      if (!this.connection) throw new Error('Invalid stored notification connection');
     } catch {
-      this.token = null;
-      this.warning = '系统安全存储暂时无法读取令牌，请重新配置微信通知。';
+      this.connection = null;
+      this.warning = '系统安全存储暂时无法读取通知配置。';
       return;
     }
     if (plain.shouldReEncrypt) {
       try {
-        const renewed = (await this.storage.encryptStringAsync(this.token)).toString('base64');
+        const renewed = (await this.storage.encryptStringAsync(encodePushConnection(this.connection))).toString('base64');
         await this.persist(this.options, renewed);
         this.encrypted = renewed;
       } catch {
-        this.warning = '系统安全存储暂时无法更新，本次仍可使用已读取的令牌。';
+        this.warning = '系统安全存储暂时无法更新，本次仍可使用已读取的通知配置。';
       }
     }
   }
@@ -64,21 +65,22 @@ class Preferences {
     });
   }
 
-  saveToken(token) {
+  saveConnection(connection) {
     return this.enqueue(async () => {
       let encrypted = null;
-      if (token) {
+      if (connection) {
         try {
           if (await this.storage.isAsyncEncryptionAvailable()) {
-            encrypted = (await this.storage.encryptStringAsync(token)).toString('base64');
+            encrypted = (await this.storage.encryptStringAsync(encodePushConnection(connection))).toString('base64');
           }
         } catch {
-          // The token stays in memory if the OS vault is unavailable.
+          // A new connection can be used for this session if the vault is unavailable.
         }
+        if (!encrypted && this.encrypted) throw new Error('Cannot replace the saved notification connection');
       }
       await this.persist(this.options, encrypted);
       this.encrypted = encrypted;
-      this.token = token;
+      this.connection = connection;
       this.warning = '';
       return Boolean(encrypted);
     });

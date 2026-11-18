@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, session, shell } = require('electron');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
 const path = require('node:path');
@@ -12,13 +12,13 @@ const {
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
 const { CourtMonitor, UserError } = require('./monitor.cjs');
 const { Preferences } = require('./preferences.cjs');
-const { sendPush, serverChanKey, testNotice } = require('./push.cjs');
+const { feishuConnection } = require('./push-connection.cjs');
+const { sendPush, testNotice } = require('./push.cjs');
 
 const UI = 'courtwatch://app/index.html';
 const ICON = path.join(__dirname, 'ui', 'icon.png');
 const PROFILE_IDENTITY = '北航羽毛球余场提醒';
-const PUSH_GUIDE = 'https://sct.ftqq.com/docs/getting-started/sendkey/';
-const PUSH_SETUP = 'https://sct.ftqq.com/sendkey';
+const PUSH_GUIDE = 'https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN';
 const CAMPUS_HOSTS = new Set(['cgyy.buaa.edu.cn', 'sso.buaa.edu.cn']);
 const WORLD = 1201;
 const appFiles = new Map([
@@ -30,8 +30,8 @@ let mainWindow, campusWindow, tray, campusSession, uiSession, monitor, prefs;
 let exiting = false;
 let sending = false;
 let editing = false;
-let changingToken = false;
-let nextPushTestAt = 0;
+let changingConnection = false;
+const nextPushTestAt = new Map();
 
 // Electron uses its internal app name for the macOS Keychain service.
 // Keep that identity and the profile path for settings saved by older releases.
@@ -124,8 +124,7 @@ function publish(state) {
 }
 
 function viewState(state) {
-  const pushService = prefs.token && !serverChanKey(prefs.token) ? 'PushPlus' : 'Server酱';
-  return { ...state, pushService };
+  return { ...state, pushService: prefs.connection?.provider ?? null };
 }
 
 async function execute(win, action, argument) {
@@ -223,50 +222,48 @@ function openCampus(url, login) {
 }
 
 async function dispatch(message, signal) {
-  if (!prefs.token) return { kind: 'blocked', text: '请先在微信通知中配置令牌。' };
-  if (sending || changingToken) return { kind: 'retry', text: '另一条通知正在处理，下一轮会再检查。' };
+  if (!prefs.connection) return { kind: 'blocked', text: '请先连接飞书群机器人。' };
+  if (sending || changingConnection) return { kind: 'retry', text: '另一条通知正在处理，下一轮会再检查。' };
   sending = true;
-  try { return await sendPush(prefs.token, message, signal); }
+  try { return await sendPush(prefs.connection, message, signal); }
   finally { sending = false; }
 }
 
-async function storePushToken(token) {
-  const persistent = await prefs.saveToken(token);
-  monitor.setDelivery(Boolean(token), persistent, token && !persistent ? '系统安全存储不可用，令牌仅保留到本次退出。' : '');
+async function storePushConnection(connection) {
+  const persistent = await prefs.saveConnection(connection);
+  monitor.setDelivery(Boolean(connection), persistent);
 }
 
-async function testPushConnection(importToken) {
-  if (!importToken && !prefs.token) throw new UserError('请先导入 SendKey。');
-  if (sending || changingToken) throw new UserError('通知正在处理，请稍候。');
+async function testPushConnection(candidate) {
+  const saved = prefs.connection;
+  const connection = candidate ?? saved;
+  if (!connection) throw new UserError('请先连接飞书群机器人。');
+  if (sending || changingConnection) throw new UserError('通知正在处理，请稍候。');
   const now = Date.now();
-  if (now < nextPushTestAt) throw new UserError('请稍候再发送测试。');
-  changingToken = true;
+  const { provider } = connection;
+  const sameDestination = !candidate || (saved?.provider === 'feishu' && candidate.webhook === saved.webhook);
+  const nextTest = nextPushTestAt.get(provider) ?? 0;
+  if (now < Math.max(nextTest, sameDestination ? monitor.pushNotBefore : 0)) {
+    throw new UserError('通知服务暂缓接收测试，请稍后再试。');
+  }
+  changingConnection = true;
   try {
-    let token = prefs.token;
-    if (importToken) {
-      let copied;
-      try { copied = await clipboard.readText(); }
-      catch { throw new UserError('候羽无法读取剪贴板。请允许粘贴后重试。'); }
-      token = serverChanKey(copied);
-      if (!token) throw new UserError('请从 Server酱 Turbo 复制以 SCT 开头的 SendKey，再导入并测试。');
+    nextPushTestAt.set(provider, now + 15000);
+    const result = await sendPush(connection, testNotice(now));
+    if (result.kind === 'retry') {
+      nextPushTestAt.set(provider, Math.max(now + 15000, Date.now() + result.retryAfterMs));
     }
-    if (now < monitor.pushNotBefore && Boolean(serverChanKey(token)) === Boolean(serverChanKey(prefs.token))) {
-      throw new UserError('推送服务暂缓接收请求，请稍后再试。');
-    }
-    nextPushTestAt = now + 15000;
-    const result = await sendPush(token, testNotice(now));
-    if (result.kind === 'retry') nextPushTestAt = Math.max(nextPushTestAt, Date.now() + result.retryAfterMs);
-    if (importToken) {
-      if (result.kind === 'retry') throw new UserError('Server酱暂缓接收测试，请稍后重试。');
+    if (candidate) {
+      if (result.kind === 'retry') throw new UserError('飞书暂缓接收测试，请稍后再试。');
       if (result.kind !== 'accepted') throw new UserError(result.text);
-      if (token !== prefs.token || !prefs.encrypted) {
-        try { await storePushToken(token); }
-        catch { throw new UserError('Server酱已受理测试，但密钥保存失败。请稍后重试。'); }
+      if (!sameDestination || candidate.secret !== saved?.secret || !prefs.encrypted) {
+        try { await storePushConnection(connection); }
+        catch { throw new UserError('飞书已受理测试。配置保存失败，请检查系统安全存储后重试。'); }
       }
     }
     monitor.recordDelivery(result);
     if (result.kind !== 'accepted') throw new UserError(result.text);
-  } finally { changingToken = false; }
+  } finally { changingConnection = false; }
 }
 
 function handle(action, run) {
@@ -307,16 +304,19 @@ function setupIpc() {
     try { await prefs.saveOptions(clean); monitor.setOptions(clean); }
     finally { editing = false; }
   });
-  handle('push-connect', () => testPushConnection(true));
-  handle('push-test', () => testPushConnection(false));
+  handle('push-connect', value => {
+    const connection = feishuConnection(value);
+    if (!connection) throw new UserError('请填写飞书自定义机器人的 Webhook，并检查签名密钥格式。');
+    return testPushConnection(connection);
+  });
+  handle('push-test', () => testPushConnection());
   handle('push-disconnect', async () => {
-    if (sending || changingToken) throw new UserError('通知正在处理，请稍候。');
-    changingToken = true;
-    try { await storePushToken(null); }
-    finally { changingToken = false; }
+    if (sending || changingConnection) throw new UserError('通知正在处理，请稍候。');
+    changingConnection = true;
+    try { await storePushConnection(null); }
+    finally { changingConnection = false; }
   });
   handle('push-guide', () => shell.openExternal(PUSH_GUIDE));
-  handle('push-setup', () => shell.openExternal(PUSH_SETUP));
 }
 
 async function initialize() {
@@ -332,7 +332,7 @@ async function initialize() {
   prefs = new Preferences(path.join(app.getPath('userData'), 'settings.json'), safeStorage);
   await prefs.load();
   monitor = new CourtMonitor({ options: prefs.options, checkVenue: readVenue, dispatch, onChange: publish });
-  monitor.setDelivery(Boolean(prefs.token), Boolean(prefs.encrypted && prefs.token), prefs.warning);
+  monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted && prefs.connection), prefs.warning);
   setupIpc();
 
   mainWindow = new BrowserWindow({

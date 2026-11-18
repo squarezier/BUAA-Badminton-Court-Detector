@@ -4,20 +4,22 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, clipboard, powerMonitor, safeStorage, session } = require('electron');
+const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
 const { calendarDates } = require('../src/courts.cjs');
 
 const profile = path.resolve(process.argv.at(-1));
-const syntheticToken = 'SCTtest-houyu-local-token-01';
-const rejectedToken = 'SCTtest-houyu-local-token-02';
+const legacyToken = 'SCTtest-houyu-local-token-01';
+const legacyCiphertext = Buffer.from('legacy-test-connection');
+const feishuCiphertext = Buffer.from('feishu-test-connection');
+const webhook = 'https://open.feishu.cn/open-apis/bot/v2/hook/11111111-2222-4333-8444-555555555555';
+const secret = 'synthetic-feishu-signing-key';
 const campusOrigin = 'https://cgyy.buaa.edu.cn';
 const label = [...calendarDates(Date.now()).keys()][1];
 const wallClock = Date.now;
 let testClockOffset = 0;
 Date.now = () => wallClock() + testClockOffset;
-let clipboardContent = 'test-houyu-other-token-00';
-let clipboardReads = 0;
-let rejectedTests = 0;
+let rejectSignature = false;
+let pushRequests = 0;
 let visibleCourts = [1];
 let expired = false;
 let pushed = [];
@@ -28,27 +30,33 @@ let cases = 0;
 process.env.COURTWATCH_DEV_PROFILE = profile;
 fs.mkdirSync(profile, { recursive: true });
 const settings = path.join(profile, 'settings.json');
-fs.writeFileSync(settings, JSON.stringify({ version: 1, options: { campus: 'shahe', interval: 2 }, encryptedToken: null }), { mode: 0o600 });
-safeStorage.isAsyncEncryptionAvailable = async () => false;
-clipboard.readText = async () => {
-  clipboardReads++;
-  return clipboardContent;
+fs.writeFileSync(settings, JSON.stringify({
+  version: 1, options: { campus: 'shahe', interval: 2 }, encryptedToken: legacyCiphertext.toString('base64'),
+}), { mode: 0o600 });
+safeStorage.isAsyncEncryptionAvailable = async () => true;
+safeStorage.decryptStringAsync = async value => {
+  assert.deepEqual(value, legacyCiphertext);
+  return { result: legacyToken };
+};
+safeStorage.encryptStringAsync = async value => {
+  assert.deepEqual(JSON.parse(value), { provider: 'feishu', webhook, secret });
+  return feishuCiphertext;
 };
 
 global.fetch = async (url, request) => {
-  const destination = new URL(url);
-  assert.equal(destination.origin, 'https://sctapi.ftqq.com');
-  assert.equal(destination.search, '');
+  pushRequests++;
+  assert.equal(url, webhook);
   assert.equal(request.method, 'POST');
-  const title = request.body.get('title');
-  const content = request.body.get('desp');
-  if (destination.pathname === `/${rejectedToken}.send`) {
+  const { msg_type, timestamp, sign, content: { post: { zh_cn: { title, content } } } } = JSON.parse(request.body);
+  assert.equal(msg_type, 'post');
+  assert.match(timestamp, /^\d{10}$/);
+  assert.match(sign, /^[A-Za-z0-9+/]{43}=$/);
+  assert.doesNotMatch(request.body, /synthetic-feishu-signing-key/);
+  if (rejectSignature) {
     assert.match(title, /测试提醒/);
-    rejectedTests++;
-    return Response.json({ code: 40001 });
+    return Response.json({ code: 19021 }, { status: 400 });
   }
-  assert.equal(destination.pathname, `/${syntheticToken}.send`);
-  pushed.push({ title, content });
+  pushed.push({ title, content: content.flat().map(node => node.text).join('\n') });
   return Response.json({ code: 0 });
 };
 
@@ -101,33 +109,40 @@ async function run(win) {
   await waitFor(view => view.auth === 'signed-in', 'sign-in');
   cases++;
 
-  await click('[data-page=wechat]');
+  await click('[data-page=feishu]');
   const feedback = () => js("document.querySelector('#push-feedback').textContent");
-  assert.equal(clipboardReads, 0, 'entering the WeChat page does not read the clipboard');
-  await click('#push-connect');
-  const missing = await waitFor(async () => (await feedback()).includes('SCT 开头'), 'clipboard validation');
-  assert.equal(missing.delivery.configured, false);
-  assert.equal(pushed.length, 0);
-  assert.equal(clipboardReads, 1);
-  clipboardContent = syntheticToken;
-  await click('#push-connect');
-  const connected = await waitFor(view => view.delivery.status === 'accepted', 'clipboard connection and test');
-  assert.equal(connected.delivery.configured, true);
-  assert.equal(connected.pushService, 'Server酱');
-  assert.equal(clipboardReads, 2);
-  assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), new RegExp(syntheticToken));
-  assert.match(pushed[0].title, /测试提醒/);
-  assert.equal(pushed.length, 1);
+  const submitConnection = address => js(`
+    document.querySelector('#feishu-webhook').value = ${JSON.stringify(address)};
+    document.querySelector('#feishu-secret').value = ${JSON.stringify(secret)};
+    document.querySelector('#push-form').requestSubmit();
+  `);
+  const storedCiphertext = () => JSON.parse(fs.readFileSync(settings, 'utf8')).encryptedToken;
+  assert.equal((await state()).pushService, 'serverchan', 'an existing WeChat channel is loaded on upgrade');
+  await submitConnection(webhook.replace('open.feishu.cn', 'example.invalid'));
+  await waitFor(async () => (await feedback()).includes('请填写飞书'), 'webhook validation');
+  assert.equal(pushRequests, 0);
+  assert.equal(storedCiphertext(), legacyCiphertext.toString('base64'));
+  rejectSignature = true;
+  await submitConnection(webhook);
+  const retained = await waitFor(async () => (await feedback()).includes('签名校验失败'), 'rejected Feishu connection');
+  assert.equal(retained.pushService, 'serverchan');
+  assert.equal(storedCiphertext(), legacyCiphertext.toString('base64'));
+  assert.equal(pushRequests, 1);
   cases++;
 
   testClockOffset += 16000;
-  clipboardContent = rejectedToken;
-  await click('#push-connect');
-  const retained = await waitFor(async () => (await feedback()).includes('40001'), 'invalid replacement');
-  assert.equal(rejectedTests, 1);
-  assert.equal(retained.delivery.configured, true);
-  assert.equal(retained.delivery.status, 'accepted');
-  assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), new RegExp(rejectedToken));
+  rejectSignature = false;
+  await submitConnection(webhook);
+  const connected = await waitFor(view => view.delivery.status === 'accepted', 'Feishu connection and test');
+  assert.equal(connected.delivery.configured, true);
+  assert.equal(connected.delivery.persistent, true);
+  assert.equal(connected.pushService, 'feishu');
+  assert.equal(storedCiphertext(), feishuCiphertext.toString('base64'));
+  assert.doesNotMatch(fs.readFileSync(settings, 'utf8'), /feishu\.cn|synthetic-feishu-signing-key/);
+  assert.doesNotMatch(JSON.stringify(connected), /feishu\.cn|synthetic-feishu-signing-key/);
+  await waitFor(async () => await js("document.querySelector('#feishu-webhook').value === ''"), 'credential fields cleared');
+  assert.match(pushed[0].title, /测试提醒/);
+  assert.equal(pushed.length, 1);
   cases++;
 
   await click('[data-page=monitor]');

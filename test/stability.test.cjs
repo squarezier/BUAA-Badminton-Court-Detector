@@ -7,6 +7,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { CourtMonitor, UserError } = require('../src/monitor.cjs');
 const { sendPush } = require('../src/push.cjs');
+const { decodePushConnection } = require('../src/push-connection.cjs');
 const { Preferences } = require('../src/preferences.cjs');
 const { beijingDay, slotKey, validOptions } = require('../src/courts.cjs');
 
@@ -144,19 +145,19 @@ test('rate-limited notifications wait and discard slots that are sold in the mea
 });
 
 test('PushPlus transient, rejected and malformed responses are distinguished', async () => {
-  const token = 'synthetic-test-token';
+  const connection = decodePushConnection('synthetic-test-token');
   const message = { title: 'test', content: '<p>test</p>' };
   const statuses = [[500, 'retry'], [903, 'blocked'], [900, 'blocked'], [null, 'unknown'], ['', 'unknown'], ['200', 'accepted']];
   for (const [code, expected] of statuses) {
-    const result = await sendPush(token, message, undefined, async () => Response.json({ code }));
+    const result = await sendPush(connection, message, undefined, async () => Response.json({ code }));
     assert.equal(result.kind, expected, `body code ${JSON.stringify(code)}`);
   }
-  const slow = await sendPush(token, message, undefined, async () => new Response('', { status: 429, headers: { 'retry-after': '300' } }));
+  const slow = await sendPush(connection, message, undefined, async () => new Response('', { status: 429, headers: { 'retry-after': '300' } }));
   assert.equal(slow.kind, 'retry');
   assert.equal(slow.retryAfterMs, 300000);
-  const gateway = await sendPush(token, message, undefined, async () => new Response('', { status: 502 }));
+  const gateway = await sendPush(connection, message, undefined, async () => new Response('', { status: 502 }));
   assert.equal(gateway.kind, 'unknown');
-  const oversized = await sendPush(token, message, undefined, async () => new Response(' '.repeat(65537)));
+  const oversized = await sendPush(connection, message, undefined, async () => new Response(' '.repeat(65537)));
   assert.equal(oversized.kind, 'unknown');
 });
 
@@ -172,7 +173,7 @@ test('a temporarily failed keychain refresh keeps a decrypted token usable in me
     async encryptStringAsync() { throw new Error('temporary vault error'); },
   });
   await store.load();
-  assert.equal(store.token, token);
+  assert.deepEqual(store.connection, { provider: 'pushplus', token });
   assert.doesNotMatch(await readFile(file, 'utf8'), /synthetic-test-token/);
 });
 
