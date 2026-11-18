@@ -158,23 +158,25 @@ function render() {
     }
     if (checking) { title = '正在读取官网场地'; note = '查询完成后，空场会显示在这里。'; }
     else if (freshestError) { title = '余量查询暂时不完整'; note = running ? '应用将自动重试。' : '登录并启动监控后，可重新查询。'; }
-    else if (anyResult) { title = '上次查询没有空场'; note = running ? '出现新的空场时，应用会更新这里。' : '启动监控后继续查询。'; }
+    else if (anyResult) { title = '暂无可显示的空场'; note = running ? '出现新的空场时，应用会更新这里。' : '启动监控后继续查询。'; }
     text('empty-title', title);
     text('empty-note', note);
   }
 
   const legacyService = { pushplus: 'PushPlus', serverchan: 'Server酱' }[current.pushService];
-  const pushStatus = legacyService ? '待切换' : delivery.status === 'blocked' ? '需检查配置' : delivery.configured ? '已连接' : '未连接';
+  const pushNeedsAttention = delivery.status === 'blocked' || (delivery.persistent && !delivery.configured);
+  const pushStatus = legacyService ? '待切换' : pushNeedsAttention ? '需检查配置' : delivery.configured ? '已连接' : '未连接';
   get('push-service').hidden = !legacyService;
   text('push-service', legacyService ? `当前使用 ${legacyService}。飞书测试通过后切换。` : '');
   text('push-status', pushStatus);
-  get('push-status').dataset.tone = delivery.status === 'blocked' ? 'warn' : delivery.configured && !legacyService ? 'good' : 'neutral';
+  get('push-status').dataset.tone = pushNeedsAttention ? 'warn' : delivery.configured && !legacyService ? 'good' : 'neutral';
   get('storage-note').hidden = !delivery.configured || delivery.persistent;
   get('push-connect').disabled = busy;
   get('feishu-webhook').disabled = busy;
   get('feishu-secret').disabled = busy;
-  get('push-actions').hidden = !delivery.configured;
-  get('push-test').disabled = busy || !delivery.configured;
+  get('push-actions').hidden = !delivery.configured && !delivery.persistent;
+  get('push-test').hidden = !delivery.configured;
+  get('push-test').disabled = busy;
   text('push-test', legacyService ? '测试当前渠道' : '再次发送测试');
   get('remove-connection').disabled = busy;
   get('push-feedback').hidden = !pushError && !delivery.text;

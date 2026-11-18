@@ -2,6 +2,7 @@
 
 // Exercise the real desktop entry point with isolated test services and a temporary profile.
 const assert = require('node:assert/strict');
+const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
@@ -22,6 +23,8 @@ let rejectSignature = false;
 let pushRequests = 0;
 let visibleCourts = [1];
 let expired = false;
+let loginFailure = '';
+let changeVenueWhileReading = false;
 let pushed = [];
 let loads = 0;
 let started = false;
@@ -63,10 +66,15 @@ global.fetch = async (url, request) => {
 
 function venuePage() {
   const rows = [1, 2, 3, 4].map(id => `<tr><td>${id}号</td><td><div class="reserveBlock ${visibleCourts.includes(id) ? 'free' : 'reserved'}">￥15.00</div></td></tr>`);
+  const grid = `<tr><td>场地</td><td>07:00-08:00</td></tr>${rows.join('')}`;
+  const update = changeVenueWhileReading ? `<script>setTimeout(() => {
+    history.replaceState(null, '', '/venue/venue-reservation/39');
+    document.querySelector('table').innerHTML = ${JSON.stringify(grid)};
+  }, 250);</script>` : '';
   return `<style>.free{background:rgb(138,212,112)}.reserved{background:rgb(253,75,55)}</style>
     <button>退出</button><div>开放时间 07:00 ~ 08:00</div>
     <div class="date_box"><div class="active"><span>${label}</span></div></div>
-    <div class="spaceTable"><table><tr><td>场地</td><td>07:00-08:00</td></tr>${rows.join('')}</table></div>`;
+    <div class="spaceTable"><table>${changeVenueWhileReading ? '' : grid}</table></div>${update}`;
 }
 
 const html = body => new Response(body, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
@@ -75,7 +83,11 @@ const mocked = app.whenReady().then(async () => {
   campus.protocol.handle('https', request => {
     const url = new URL(request.url);
     assert.equal(url.origin, campusOrigin);
-    if (url.pathname === '/venue/login') return expired ? html('<p>统一身份认证</p>') : Response.redirect(`${campusOrigin}/venue/home`);
+    if (url.pathname === '/venue/login') {
+      if (loginFailure === 'network') return Response.error();
+      if (loginFailure === 'server') return new Response('Service Unavailable', { status: 503 });
+      return expired ? html('<p>统一身份认证</p>') : Response.redirect(`${campusOrigin}/venue/home`);
+    }
     if (url.pathname === '/venue/home') return html('<button>退出</button>');
     if (url.pathname.startsWith('/venue/venue-reservation/')) {
       loads++;
@@ -110,6 +122,15 @@ async function run(win) {
 
   assert.equal((await state()).auth, 'signed-out');
   assert.equal(await js('document.querySelector("#monitor-action").disabled'), true);
+  for (const failure of ['network', 'server']) {
+    loginFailure = failure;
+    await click('#account-action');
+    await waitFor(async view => view.auth === 'signed-out' && await js(`
+      !document.querySelector('#account-action').disabled && document.querySelector('#toast').textContent.includes('官网暂时无法打开')
+    `), `login can be retried after a ${failure} error`);
+  }
+  loginFailure = '';
+  cases++;
   await click('#account-action');
   await waitFor(view => view.auth === 'signed-in', 'sign-in');
   cases++;
@@ -182,11 +203,35 @@ async function run(win) {
   }
   cases++;
 
+  changeVenueWhileReading = true;
+  const beforeRedirect = loads;
+  wake();
+  const mismatched = await waitFor(view => loads > beforeRedirect && !view.checking && view.nextAt !== null, 'scan with changing venue URL');
+  assert.equal(mismatched.slotCount, 0, 'a different venue URL invalidates an otherwise readable timetable');
+  assert.match(mismatched.venues[0].error, /跳转异常/);
+  assert.equal(pushed.length, 2);
+  changeVenueWhileReading = false;
+  cases++;
+
+  win.hide();
+  const rendererGone = once(win.webContents, 'render-process-gone', { signal: AbortSignal.timeout(5000) });
+  win.webContents.forcefullyCrashRenderer();
+  await rendererGone;
+  const reloaded = once(win.webContents, 'did-finish-load', { signal: AbortSignal.timeout(5000) });
+  const beforeRecovery = loads;
+  wake();
+  app.emit('activate');
+  await reloaded;
+  await waitFor(view => loads > beforeRecovery && view.running && !view.checking && view.slotCount === 2, 'reopen a crashed interface while monitoring continues');
+  assert.equal(win.isVisible(), true);
+  assert.equal(pushed.length, 2);
+  cases++;
+
   await click('#open-booking');
   const bookingPage = await waitFor(() => BrowserWindow.getAllWindows().find(page =>
     page !== win && page.webContents.getURL() === `${campusOrigin}/venue/venue-reservation/57`
   ), 'official booking window');
-  assert.equal(bookingPage.auth, 'signed-in');
+  assert.equal((await state()).auth, 'signed-in');
   expired = true;
   wake();
   const last = await waitFor(view => view.auth === 'expired', 'sign-in expires');

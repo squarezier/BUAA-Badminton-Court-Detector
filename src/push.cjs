@@ -7,6 +7,7 @@ const { productName } = require('../package.json');
 const PUSH_URL = 'https://www.pushplus.plus/send';
 const SERVER_CHAN_ORIGIN = 'https://sctapi.ftqq.com';
 const PUSH_RESPONSE_LIMIT = 65536;
+const NETWORK_RETRY_DELAY = 60000;
 const PUSH_RETRY_DEFAULT = 120000;
 const SERVER_CHAN_RETRY_DEFAULT = 24 * 60 * 60 * 1000;
 const FEISHU_RETRY_DEFAULT = 60000;
@@ -125,6 +126,13 @@ function retryDelay(header, fallback) {
   return Number.isSafeInteger(duration) && duration > 0 ? duration : fallback;
 }
 
+function couldNotConnect(error) {
+  const cause = error?.cause;
+  if (cause?.code === 'UND_ERR_CONNECT_TIMEOUT') return true;
+  if (cause?.syscall === 'getaddrinfo') return ['EAI_AGAIN', 'ENOTFOUND'].includes(cause.code);
+  return cause?.syscall === 'connect' && ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(cause.code);
+}
+
 function serverChanResult(code) {
   if (code === 0) return { kind: 'accepted', text: 'Server酱已受理，请在微信确认接收。' };
   if (Number.isSafeInteger(code) && code > 0) {
@@ -169,13 +177,14 @@ async function sendPush(connection, message, signal, fetchRequest = fetch) {
   const feishu = connection.provider === 'feishu';
   const serverChan = connection.provider === 'serverchan';
   const service = feishu ? '飞书' : serverChan ? 'Server酱' : 'PushPlus';
+  let response;
   try {
     const { endpoint, headers, body } = pushRequest(connection, message);
     if (feishu && Buffer.byteLength(body) > FEISHU_REQUEST_LIMIT) {
       return { kind: 'blocked', text: '提醒超过飞书消息大小限制，请在候羽查看当前空场。' };
     }
     const timeout = AbortSignal.timeout(12000);
-    const response = await fetchRequest(endpoint, {
+    response = await fetchRequest(endpoint, {
       method: 'POST', redirect: 'error', cache: 'no-store',
       headers,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -206,7 +215,12 @@ async function sendPush(connection, message, signal, fetchRequest = fetch) {
     if (code === 900) return { kind: 'blocked', text: 'PushPlus 限制发送，请检查配额或账号状态。' };
     if (!Number.isInteger(code) || code < 100 || code > 999) return { kind: 'unknown', text: 'PushPlus 返回异常，送达状态待确认。' };
     return { kind: 'blocked', text: `PushPlus 拒绝发送（${code}），请核对令牌和服务号。` };
-  } catch {
+  } catch (error) {
+    // A failure before connecting cannot have delivered the POST. A timeout or
+    // disconnect after connection is ambiguous and must not be retried blindly.
+    if (!response && couldNotConnect(error)) {
+      return { kind: 'retry', retryAfterMs: NETWORK_RETRY_DELAY, text: `暂时无法连接${service}，重新核验空场后将重试。` };
+    }
     if (signal?.aborted) return { kind: 'cancelled' };
     return { kind: 'unknown', text: '连接中断或超时，送达状态待确认。' };
   }

@@ -22,19 +22,20 @@ const auditedVenues = [
 ];
 
 function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
-  decorateBeforeRefresh = false, hiddenAvailableCell = false }) {
+  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
   const table = document.querySelector('table');
+  const head = table.createTHead();
+  const body = table.createTBody();
   const closure = document.querySelector('.ivu-table-tip');
-  const starts = [opening, opening + 5, opening + 10];
+  const starts = overlapping ? [opening, opening + 4, opening + 8, 17] : [opening, opening + 5, opening + 10];
   let selected = 0;
   let page = 1;
   const hour = value => `${String(value).padStart(2, '0')}:00`;
-  function draw() {
-    table.replaceChildren();
-    closure.hidden = !closed.includes(selected);
+  function drawHeader() {
+    head.replaceChildren();
     if (!closure.hidden) return;
-    const header = table.insertRow();
+    const header = head.insertRow();
     header.insertCell().textContent = '场地';
     const first = starts[page];
     for (let current = first; current < Math.min(22, first + 5); current++) {
@@ -45,18 +46,29 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         const arrow = document.createElement('i');
         arrow.className = className;
         arrow.textContent = '→';
-        arrow.onclick = () => { page += direction; draw(); };
+        arrow.onclick = () => {
+          page += direction;
+          drawHeader();
+          if (pageDelay) setTimeout(drawRows, pageDelay);
+          else drawRows();
+        };
         column.append(arrow);
       };
       if (page && current === first) addArrow('ivu-icon-ios-arrow-back', -1);
-      if (page < 2 && current === first + 4) addArrow('ivu-icon-ios-arrow-forward', 1);
+      if (page < starts.length - 1 && current === first + 4) addArrow('ivu-icon-ios-arrow-forward', 1);
     }
+  }
+  function drawRows() {
+    body.replaceChildren();
+    if (!closure.hidden) return;
+    const first = starts[page];
     for (const court of courts) {
-      const row = table.insertRow();
+      const row = body.insertRow();
       row.insertCell().textContent = `${court}号`;
       for (let current = first; current < Math.min(22, first + 5); current++) {
         if (current === missingHour) continue;
-        const available = slots.some(([date, start, ids]) => date === selected && start === current && ids.includes(court));
+        const soldBetweenPages = overlapping && selected === 1 && current === starts[1] && page > 0;
+        const available = !soldBetweenPages && slots.some(([date, start, ids]) => date === selected && start === current && ids.includes(court));
         const disabled = selected === 0 && current < 14;
         const block = document.createElement('div');
         block.className = `reserveBlock position ${available ? 'free' : disabled ? 'free disabled' : 'reserved'}`;
@@ -67,6 +79,11 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         cell.append(block);
       }
     }
+  }
+  function draw() {
+    closure.hidden = !closed.includes(selected);
+    drawHeader();
+    drawRows();
   }
   buttons.forEach((button, index) => {
     button.onclick = () => {
@@ -113,6 +130,12 @@ async function run() {
   const afterDecoration = await readFixture({ ...auditedVenues[1], decorateBeforeRefresh: true, switchDelay: 900 });
   assert.equal(afterDecoration.error, undefined, 'a date switch can complete after the real refresh');
   assert.deepEqual(afterDecoration.days.map(day => day.slots.length), [0, 8, 7], 'visual changes must not make stale rows count for a new date');
+  const delayedPage = await readFixture({ opening: 7, courts: [1, 2], slots: [[1, 7, [1]], [1, 12, [2]]], pageDelay: 400 });
+  assert.deepEqual(delayedPage.days[1].slots.map(({ start, court }) => [start, court]), [['07:00', 1], ['12:00', 2]],
+    'a changed header alone cannot move an old green cell to a different time');
+  const overlappingPages = await readFixture({ opening: 7, courts: [1, 2], slots: [[1, 11, [1]], [1, 12, [2]]], overlapping: true });
+  assert.deepEqual(overlappingPages.days[1].slots.map(({ start, court }) => [start, court]), [['12:00', 2]],
+    'a later page supersedes a green cell that was sold in an overlapping time column');
   const invisible = await readFixture({ ...auditedVenues[2], hiddenAvailableCell: true });
   assert.deepEqual(invisible, { error: 'colors' }, 'a green block hidden by its parent is unverified');
   const incomplete = await readFixture({ ...auditedVenues[0], missingHour: 19 });
@@ -191,8 +214,17 @@ async function run() {
     }, 25);
   })`);
   assert.equal(expiredSlotRemoved, true, 'a started slot disappears from the table between scans');
+  window.webContents.send('courtwatch:state', {
+    ...state, pushService: null, delivery: { configured: false, persistent: true, status: 'off', text: '系统安全存储暂时无法读取通知配置。', at: null },
+  });
+  await paint();
+  await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
+  assert.deepEqual(await window.webContents.executeJavaScript(`[
+    !document.querySelector('#push-actions').hidden && !document.querySelector('#remove-connection').disabled,
+    document.querySelector('#push-test').hidden,
+  ]`), [true, true], 'a saved but inaccessible connection can be cleared from the application');
   window.destroy();
-  process.stdout.write('Electron UI, three venue replays, stale closures, missing time columns, wrong colors, and expiry display passed.\n');
+  process.stdout.write('Electron UI and timetable regressions passed, including delayed and overlapping pages, expiry, and clearing unreadable settings.\n');
   app.exit(0);
 }
 

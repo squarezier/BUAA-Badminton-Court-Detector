@@ -91,7 +91,7 @@ async function readBookingPage({ todayLabel, nowClock }) {
     return readWindow() ?? (closedMessage() ? { closed: true } : null);
   }
 
-  async function selectDay(button, label) {
+  async function afterTimetableChange(button, readFrame) {
     const timetableData = '.reserveBlock, .ivu-table-tip';
     let changedAt = null;
     let wasBusy = false;
@@ -128,9 +128,8 @@ async function readBookingPage({ todayLabel, nowClock }) {
       attributeOldValue: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'hidden'] });
     try {
       button.click();
-      // The active tab changes before the network request settles. Require a
-      // refresh of the data or a completed loading state before reading it.
-      return await waitFor(() => !trackLoading() && changedAt !== null && performance.now() - changedAt >= 120 && dayFrame(label));
+      // Tabs and time headers can change before the reservation cells do.
+      return await waitFor(() => !trackLoading() && changedAt !== null && performance.now() - changedAt >= 120 && readFrame());
     } finally { observer.disconnect(); }
   }
 
@@ -156,7 +155,8 @@ async function readBookingPage({ todayLabel, nowClock }) {
     }
     const button = dateButtons().find(item => labelOf(item) === label);
     if (!button) return { error: 'layout' };
-    const dayView = activeDate() === label ? await waitFor(() => dayFrame(label)) : await selectDay(button, label);
+    const readDay = () => dayFrame(label);
+    const dayView = activeDate() === label ? await waitFor(readDay) : await afterTimetableChange(button, readDay);
     if (!dayView) return { error: 'layout' };
     if (dayView.closed) {
       days.push({ label, slots: [] });
@@ -169,30 +169,34 @@ async function readBookingPage({ todayLabel, nowClock }) {
     for (let count = 0; mins(view.first) > firstNeeded && count < 5; count++) {
       if (!view.back) return { error: 'layout' };
       const previousFirst = view.first;
-      view.back.click();
-      view = await waitFor(() => {
+      view = await afterTimetableChange(view.back, () => {
         const frame = readWindow();
         return frame && frame.date === label && frame.first < previousFirst ? frame : null;
       });
       if (!view) return { error: 'layout' };
     }
     if (mins(view.first) > firstNeeded) return { error: 'layout' };
-    const daySlots = [];
+    const columns = new Map();
     for (let page = 0; page < 8; page++) {
       if (view.colorConflict) return { error: 'colors' };
-      daySlots.push(...view.slots);
+      for (const [start, end] of view.times) {
+        const earlier = columns.get(start);
+        if (earlier && earlier.end !== end) return { error: 'layout' };
+        // An overlapping column is more recent, even if it now has no slots.
+        columns.set(start, { end, slots: [] });
+      }
+      for (const slot of view.slots) columns.get(slot.start).slots.push(slot);
       if (view.last === closing) break;
       if (!view.forward || mins(view.last) > mins(closing) || page === 7) return { error: 'layout' };
       const previousLast = view.last;
-      view.forward.click();
-      view = await waitFor(() => {
+      view = await afterTimetableChange(view.forward, () => {
         const frame = readWindow();
         return frame && frame.date === label && frame.last > previousLast && frame.first <= previousLast ? frame : null;
       });
-      if (!view) return { error: 'layout' };
+      if (!view || (view.first < previousLast && !columns.has(view.first))) return { error: 'layout' };
     }
     if (view.last !== closing) return { error: 'layout' };
-    days.push({ label, slots: daySlots });
+    days.push({ label, slots: [...columns.values()].flatMap(column => column.slots) });
   }
   return { days };
 }

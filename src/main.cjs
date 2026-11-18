@@ -103,6 +103,9 @@ function secureCampusWindow(win, allowSameWindowPopup) {
 
 function showMain() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isCrashed() && !mainWindow.webContents.isLoadingMainFrame()) {
+    void mainWindow.loadURL(UI).catch(() => {});
+  }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -110,7 +113,9 @@ function showMain() {
 }
 
 function publish(state) {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('courtwatch:state', viewState(state));
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isCrashed()) {
+    mainWindow.webContents.send('courtwatch:state', viewState(state));
+  }
   if (!tray || tray.isDestroyed()) return;
   const label = state.running ? (state.checking ? '正在查场地' : '监控中') : '监控已暂停';
   tray.setToolTip(`${productName} · ${label}`);
@@ -143,16 +148,19 @@ async function readVenue(id, signal) {
   const close = () => { if (!win.isDestroyed()) win.destroy(); };
   const timeout = setTimeout(close, 32000);
   signal.addEventListener('abort', close, { once: true });
+  const verifyDestination = () => {
+    const url = win.webContents.getURL();
+    if (onCampusLogin(url)) throw new UserError('北航会话已失效，请重新登录。', 'auth');
+    if (url !== target) throw new UserError('官网跳转异常，请在预约页查看。');
+  };
   try {
     await win.loadURL(target);
     signal.throwIfAborted();
-    const destination = win.webContents.getURL();
-    if (onCampusLogin(destination)) throw new UserError('北航会话已失效，请重新登录。', 'auth');
-    if (destination !== target) throw new UserError('官网跳转异常，请在预约页查看。');
+    verifyDestination();
     const started = Date.now();
     const result = await execute(win, readBookingPage, { todayLabel: calendarDates(started).keys().next().value, nowClock: beijingClock(started) });
     signal.throwIfAborted();
-    if (onCampusLogin(win.webContents.getURL())) throw new UserError('北航会话已失效，请重新登录。', 'auth');
+    verifyDestination();
     if (result?.error === 'colors') throw new UserError('官网格子的颜色和预约状态不一致，本轮无法确认该馆余量。');
     if (result?.error === 'layout' || !result?.days) {
       throw new UserError('官网时段表暂不可读，请稍后重试。');
@@ -169,20 +177,37 @@ async function readVenue(id, signal) {
   }
 }
 
-function loadCampusPage(win, url) {
-  void win.loadURL(url).catch(() => {
-    if (!win.isDestroyed()) win.setTitle('北航官网暂时无法打开 · 请检查网络');
-  });
+async function loadCampusPage(win, url) {
+  const contents = win.webContents;
+  let timer;
+  let httpStatus;
+  const recordStatus = (_event, _location, status) => { httpStatus = status; };
+  contents.on('did-navigate', recordStatus);
+  try {
+    await Promise.race([win.loadURL(url), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Campus page load timed out')), 25000);
+    })]);
+    if (httpStatus >= 400) throw new Error('Campus page returned an HTTP error');
+  } catch (error) {
+    if (win.isDestroyed() || (error.code === 'ERR_ABORTED' &&
+      (contents.isLoadingMainFrame() || campusPage(contents.getURL())))) return;
+    contents.stop();
+    win.setTitle('北航官网暂时无法打开 · 请检查网络');
+    throw new UserError('北航官网暂时无法打开，请检查网络后重试。');
+  } finally {
+    clearTimeout(timer);
+    if (!contents.isDestroyed()) contents.off('did-navigate', recordStatus);
+  }
 }
 
-function openCampus(url, login) {
+async function openCampus(url, login) {
   if (campusWindow && !campusWindow.isDestroyed()) {
     if (login && monitor.auth !== 'opening') {
       campusWindow.destroy();
     } else {
       campusWindow.show();
       campusWindow.focus();
-      if (!login && monitor.auth !== 'opening' && campusWindow.webContents.getURL() !== url) loadCampusPage(campusWindow, url);
+      if (!login && monitor.auth !== 'opening' && campusWindow.webContents.getURL() !== url) return loadCampusPage(campusWindow, url);
       return;
     }
   }
@@ -224,7 +249,14 @@ function openCampus(url, login) {
     if (campusWindow === win) campusWindow = null;
     if (monitor.auth === 'opening') monitor.setAuth(previous === 'expired' ? 'expired' : 'signed-out');
   });
-  loadCampusPage(win, url);
+  try { await loadCampusPage(win, url); }
+  catch (error) {
+    if (login && !win.isDestroyed() && monitor.auth === 'opening') {
+      win.destroy();
+      showMain();
+    }
+    throw error;
+  }
 }
 
 async function dispatch(message, signal) {
@@ -260,7 +292,7 @@ async function testPushConnection(candidate) {
       nextPushTestAt.set(provider, Math.max(now + 15000, Date.now() + result.retryAfterMs));
     }
     if (candidate) {
-      if (result.kind === 'retry') throw new UserError('飞书暂缓接收测试，请稍后再试。');
+      if (result.kind === 'retry') throw new UserError('这次测试暂未发送成功，请稍后再试。');
       if (result.kind !== 'accepted') throw new UserError(result.text);
       if (!sameDestination || candidate.secret !== saved?.secret || !prefs.encrypted) {
         try { await storePushConnection(connection); }
@@ -288,7 +320,7 @@ function setupIpc() {
   handle('login', () => openCampus(LOGIN_URL, true));
   handle('open-venue', id => {
     if (typeof id !== 'string' || !Object.hasOwn(VENUES, id)) throw new UserError('场馆无效。');
-    openCampus(venueUrl(id), false);
+    return openCampus(venueUrl(id), false);
   });
   handle('log-out', async () => {
     if (campusWindow && !campusWindow.isDestroyed()) campusWindow.destroy();
@@ -338,7 +370,7 @@ async function initialize() {
   prefs = new Preferences(path.join(app.getPath('userData'), 'settings.json'), safeStorage);
   await prefs.load();
   monitor = new CourtMonitor({ options: prefs.options, checkVenue: readVenue, dispatch, onChange: publish });
-  monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted && prefs.connection), prefs.warning);
+  monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted), prefs.warning);
   setupIpc();
 
   mainWindow = new BrowserWindow({

@@ -7,7 +7,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { CourtMonitor, UserError } = require('../src/monitor.cjs');
 const { sendPush } = require('../src/push.cjs');
-const { decodePushConnection } = require('../src/push-connection.cjs');
+const { decodePushConnection, feishuConnection } = require('../src/push-connection.cjs');
 const { Preferences } = require('../src/preferences.cjs');
 const { beijingDay, slotKey, validOptions } = require('../src/courts.cjs');
 
@@ -70,6 +70,74 @@ test('suspend and resume do not resend a push already handed to the provider', a
   await monitor.check();
   assert.equal(sends, 1);
   assert.equal(monitor.state().slotCount, 2);
+});
+
+test('a rate limit confirmed during sleep preserves the retry and rechecks what is still free', async t => {
+  let now = baselineTime;
+  let avail = stamped(slot(1));
+  const underway = deferred();
+  const limited = deferred();
+  const sent = [];
+  const monitor = setup(t, {
+    now: () => now,
+    async checkVenue() { return avail; },
+    async dispatch(message) {
+      sent.push(message);
+      if (sent.length !== 1) return accepted;
+      underway.resolve();
+      return limited.promise;
+    },
+  });
+  await monitor.check();
+  avail = stamped(slot(1), slot(2), slot(3));
+  const interrupted = monitor.check();
+  await underway.promise;
+  monitor.setSuspended(true);
+  limited.resolve({ kind: 'retry', retryAfterMs: 60000, text: 'rate-limited' });
+  await interrupted;
+  monitor.setSuspended(false);
+  avail = stamped(slot(1), slot(3));
+  await monitor.check();
+  assert.equal(sent.length, 1);
+  assert.equal(monitor.state().delivery.status, 'retry');
+  now += 60000;
+  await monitor.check();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].content, /3号/);
+  assert.doesNotMatch(sent[1].content, /2号/);
+});
+
+test('a late retry from a paused campus is discarded on switching campuses', async t => {
+  const underway = deferred();
+  const limited = deferred();
+  const sent = [];
+  let courts = [1];
+  const monitor = setup(t, {
+    async checkVenue(id) { return stamped(...courts.map(court => slot(court, id))); },
+    async dispatch(message) {
+      sent.push(message);
+      if (sent.length !== 1) return accepted;
+      underway.resolve();
+      return limited.promise;
+    },
+  });
+  await monitor.check();
+  courts = [1, 2];
+  const interrupted = monitor.check();
+  await underway.promise;
+  monitor.stop();
+  monitor.setOptions({ campus: 'xueyuanlu', interval: 2 });
+  monitor.start();
+  limited.resolve({ kind: 'retry', retryAfterMs: 300000, text: 'old destination limit' });
+  await interrupted;
+  await monitor.check();
+  assert.equal(monitor.state().delivery.status, 'ready');
+  assert.equal(sent.length, 1);
+  courts = [1, 2, 3];
+  await monitor.check();
+  assert.equal(sent.length, 2);
+  assert.match(sent[1].title, /学院路校区新增 2 场次/);
+  assert.doesNotMatch(sent[1].content, /venue-reservation\/57/);
 });
 
 test('one bad venue leaves the healthy venue on its configured cadence', async t => {
@@ -159,6 +227,23 @@ test('PushPlus transient, rejected and malformed responses are distinguished', a
   assert.equal(gateway.kind, 'unknown');
   const oversized = await sendPush(connection, message, undefined, async () => new Response(' '.repeat(65537)));
   assert.equal(oversized.kind, 'unknown');
+});
+
+test('notification transport retries pre-connection failures and treats a lost response as uncertain', async () => {
+  const connection = feishuConnection({ webhook: 'https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-test-hook' });
+  const message = { feishuCard: { body: {} } };
+  function sendWithFailure(code, syscall) {
+    return sendPush(connection, message, undefined, async () => {
+      throw new TypeError('fetch failed', { cause: { code, syscall } });
+    });
+  }
+  for (const [code, syscall] of [['EAI_AGAIN', 'getaddrinfo'], ['ECONNREFUSED', 'connect']]) {
+    const result = await sendWithFailure(code, syscall);
+    assert.equal(result.kind, 'retry');
+    assert.ok(result.retryAfterMs >= 60000);
+  }
+  assert.equal((await sendWithFailure('ECONNRESET', 'read')).kind, 'unknown');
+  assert.equal((await sendWithFailure('ECONNREFUSED', 'read')).kind, 'unknown');
 });
 
 test('a temporarily failed keychain refresh keeps a decrypted token usable in memory', async t => {

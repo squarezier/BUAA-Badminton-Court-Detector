@@ -80,7 +80,7 @@ class CourtMonitor {
   }
 
   setDelivery(configured, persistent, text = '') {
-    this.pending.clear();
+    this.pending = new Map();
     this.pushNotBefore = 0;
     this.delivery = { configured, persistent, status: configured ? 'ready' : 'off', text, at: null };
     this.emit();
@@ -116,7 +116,7 @@ class CourtMonitor {
     this.running = false;
     this.interrupt();
     this.previous.clear();
-    this.pending.clear();
+    this.pending = new Map();
     if (announce) this.emit();
   }
 
@@ -193,19 +193,22 @@ class CourtMonitor {
       for (const [key, slot] of this.pending) {
         if (startsAt(slot) <= this.lastAt) this.pending.delete(key);
       }
-      const batch = [...this.pending].filter(([, slot]) => !failed.has(slot.venue));
+      const pending = this.pending;
+      const batch = [...pending].filter(([, slot]) => !failed.has(slot.venue));
       if (batch.length && this.delivery.configured && this.delivery.status !== 'blocked' && this.lastAt >= this.pushNotBefore) {
         // Once handed off, a cancelled request may already have been accepted.
-        for (const [key] of batch) this.pending.delete(key);
+        for (const [key] of batch) pending.delete(key);
         let result;
         try {
           result = await this.dispatch(notice(this.options.campus, batch.map(([, slot]) => slot), this.lastAt), task.signal);
         } catch {
           result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
         }
-        if (task.signal.aborted) return;
+        // Pausing or replacing the connection discards the old queue. Sleep
+        // keeps it, so a confirmed rejection can still be retried after waking.
+        if (this.pending !== pending) return;
         if (result.kind === 'retry' || result.kind === 'blocked') {
-          for (const [key, slot] of batch) this.pending.set(key, slot);
+          for (const [key, slot] of batch) pending.set(key, slot);
         }
         this.recordDelivery(result);
       }
