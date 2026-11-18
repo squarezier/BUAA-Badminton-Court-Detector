@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>候羽</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <img src="icon.png" alt="" width="48" height="48">
+        <div><strong>候羽</strong><span>北航羽毛球提醒</span></div>
+      </div>
+      <nav aria-label="应用页面" class="navigation">
+        <button type="button" class="nav current" data-page="monitor" aria-current="page"><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
+        <button type="button" class="nav" data-page="wechat"><span class="nav-icon chat-icon" aria-hidden="true"></span>微信通知</button>
+      </nav>
+      <section class="account" aria-labelledby="account-title">
+        <h2 id="account-title">北航账号</h2>
+        <p class="account-state"><i id="account-dot" class="dot"></i><span id="account-state">尚未登录</span></p>
+        <button id="account-action" class="button account-button" type="button">登录北航</button>
+        <p class="account-note">通过学校统一身份认证登录</p>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <section id="page-monitor" aria-labelledby="monitor-title">
+        <header class="page-head">
+          <div>
+            <h1 id="monitor-title">场地监控</h1>
+            <p>数据来自北航智慧场馆</p>
+          </div>
+          <button class="button primary" id="monitor-action" type="button" disabled><span class="play-icon" aria-hidden="true"></span><span id="monitor-action-label">开始监控</span></button>
+        </header>
+
+        <section class="monitor-band" aria-label="监控状态">
+          <div class="band-title">
+            <div class="monitor-state" id="monitor-state" data-tone="neutral" role="status"><i class="dot"></i><span id="monitor-state-label">等待登录</span></div>
+            <h2 id="selected-campus">沙河校区</h2>
+            <p id="selected-venues">综合馆 · 每 2 分钟检查</p>
+          </div>
+          <dl class="metrics">
+            <div><dt>可约场次</dt><dd id="count">—</dd></div>
+            <div><dt>上次检查</dt><dd id="checked">—</dd></div>
+            <div><dt>下次检查</dt><dd id="next">—</dd></div>
+          </dl>
+        </section>
+
+        <section class="card settings" aria-label="监控设置">
+          <fieldset id="campus-field">
+            <legend>监控校区</legend>
+            <div class="campus-options">
+              <label class="choice">
+                <input type="radio" name="campus" value="shahe" checked>
+                <span><strong>沙河</strong><small>综合馆</small></span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="campus" value="xueyuanlu">
+                <span><strong>学院路</strong><small>主馆、训练馆</small></span>
+              </label>
+            </div>
+          </fieldset>
+          <div class="interval-control">
+            <form id="interval-form">
+              <label for="interval">检查频率</label>
+              <div class="interval-entry"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required aria-describedby="options-note"><button class="button interval-save" type="submit" id="save-interval">保存</button></div>
+            </form>
+            <p id="options-note">每 1–1440 分钟检查一次</p>
+          </div>
+        </section>
+
+        <section class="card schedule" aria-labelledby="schedule-title">
+          <div class="card-head">
+            <div><h2 id="schedule-title"><i class="schedule-dot" aria-hidden="true"></i><span id="schedule-title-label">当前空场</span></h2><p id="scope">仅统计官网的绿色可约格</p></div>
+            <button class="quiet" type="button" id="open-booking">打开官方预约页 <span aria-hidden="true">↗</span></button>
+          </div>
+          <div id="read-error" class="warning" role="status" hidden></div>
+          <div id="empty" class="empty">
+            <div class="empty-glyph court-icon" aria-hidden="true"></div>
+            <strong id="empty-title">登录后可查看余量</strong>
+            <p id="empty-note">启动监控后，官网标绿且尚未开始的空场会显示在这里。</p>
+          </div>
+          <div class="table-wrap" id="table-wrap" hidden>
+            <table>
+              <thead><tr><th scope="col">日期</th><th scope="col">时段</th><th scope="col">场馆</th><th scope="col">场号</th><th scope="col">价格</th></tr></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="page-wechat" aria-labelledby="wechat-title" hidden>
+        <header class="page-head"><div><h1 id="wechat-title">微信通知</h1><p>接收新空场提醒</p></div></header>
+        <div class="push-grid">
+          <section class="card push-card" aria-labelledby="push-title">
+            <div class="card-head">
+              <div><h2 id="push-title">连接 PushPlus</h2><p>请关注服务号并完成实名认证。</p></div>
+              <span class="status-chip" id="push-status" data-tone="neutral">未配置</span>
+            </div>
+            <div class="push-body">
+              <div class="push-links"><button type="button" class="quiet" id="push-setup">获取令牌 ↗</button><button type="button" class="quiet" id="push-guide">接入说明 ↗</button></div>
+              <form id="token-form">
+                <label for="push-token">推送令牌</label>
+                <div class="token-row"><input id="push-token" type="password" placeholder="粘贴 PushPlus 令牌" autocomplete="off" spellcheck="false" maxlength="128" required><button class="button primary" id="save-token" type="submit">保存令牌</button></div>
+              </form>
+              <p id="storage-note">令牌使用系统安全存储。</p>
+              <div class="push-actions"><button type="button" class="button" id="push-test" disabled>发送测试</button><button type="button" class="quiet danger" id="remove-token" hidden>移除令牌</button></div>
+              <p class="feedback" id="push-feedback" role="status" hidden></p>
+            </div>
+          </section>
+          <section class="card example" aria-labelledby="example-title">
+            <div class="card-head"><h2 id="example-title">消息示例</h2></div>
+            <div class="message-sample">
+              <div class="message-source"><img src="icon.png" alt="" width="28" height="28"><span>PushPlus 推送加</span></div>
+              <strong>候羽｜沙河校区新增 2 场次</strong>
+              <p><time datetime="11-20">11 月 20 日</time> · 18:00–19:00<br>综合馆 3、5 号 · ¥25</p>
+              <span class="example-link">综合馆预约页 ↗</span>
+            </div>
+            <p class="example-note">首次检查展示已有空场。之后每轮只推送新发现的场地。</p>
+          </section>
+        </div>
+      </section>
+
+      <footer class="footer"><span>时段以北京时间显示</span><span>关闭窗口后可在菜单栏或托盘查看</span></footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
