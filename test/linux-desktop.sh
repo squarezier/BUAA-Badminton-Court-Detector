@@ -18,29 +18,66 @@ case "$mode" in
     desktop-file-validate /usr/share/applications/houyu.desktop
     openbox > "$qa_dir/wm.log" 2>&1 &
     wm_pid=$!
-    trap 'kill "$wm_pid" 2>/dev/null || true' EXIT
-    for attempt in {1..60}; do
-      if xdotool getnumdesktops 2>/dev/null | grep -q '^[1-9]'; then break; fi
-      sleep .2
-    done
+    stage='wait for Openbox'
+    finish_desktop() {
+      local status=$?
+      if ((status != 0)); then
+        printf 'Ubuntu desktop failed at "%s" (rc=%s, elapsed=%ss)\n' "$stage" "$status" "$SECONDS" >&2
+        xprop -root _NET_ACTIVE_WINDOW _NET_CLIENT_LIST _NET_SUPPORTING_WM_CHECK >&2 || true
+        if [[ -n ${houyu_pid:-} ]]; then
+          ps -o pid,stat,comm -p "$houyu_pid" >&2 || true
+          kill "$houyu_pid" 2>/dev/null || true
+        fi
+      fi
+      kill "$wm_pid" 2>/dev/null || true
+    }
+    trap finish_desktop EXIT
+    wait_until() {
+      local deadline=$((SECONDS + $1))
+      shift
+      until "$@"; do
+        if ((SECONDS >= deadline)); then return 1; fi
+        sleep .1
+      done
+    }
+    wm_ready() { [[ $(xdotool get_num_desktops 2>/dev/null) =~ ^[1-9][0-9]*$ ]]; }
+    find_window() { xdotool search --all --onlyvisible --limit 1 --pid "$houyu_pid" --name '^候羽$'; }
+    visible() { window=$(find_window) && [[ -n $window ]]; }
+    hidden() { ! find_window >/dev/null; }
+    focused() {
+      [[ $(xdotool getactivewindow 2>/dev/null) == "$original" && $(xdotool getwindowfocus 2>/dev/null) == "$original" ]]
+    }
+    wait_until 12 wm_ready
+    stage='show the original application window'
     houyu > "$qa_dir/app.log" 2>&1 &
     houyu_pid=$!
-    if ! window=$(timeout 45s xdotool search --sync --onlyvisible --name '^候羽$' | head -1); then
-      cat "$qa_dir/app.log"
-      exit 1
-    fi
-    xdotool windowactivate --sync "$window"
-    xdotool key --clearmodifiers alt+F4
-    timeout 10s bash -c 'while xdotool search --onlyvisible --name "^候羽$" >/dev/null; do sleep .1; done'
-    kill -0 "$houyu_pid"
-    timeout 15s houyu
-    reopened=$(timeout 15s xdotool search --sync --onlyvisible --name '^候羽$' | head -1)
-    test "$reopened" = "$window"
-    xdotool windowactivate --sync "$reopened"
+    wait_until 45 visible
+    original=$window
+    for cycle in 1 2; do
+      stage="focus the application before closing ($cycle)"
+      timeout 10s xdotool windowactivate --sync "$original"
+      wait_until 10 focused
+      stage="hide the application with Alt+F4 ($cycle)"
+      xdotool key --clearmodifiers alt+F4
+      wait_until 10 hidden
+      kill -0 "$houyu_pid"
+      stage="launch the second instance ($cycle)"
+      timeout 15s houyu
+      stage="recover the original window ($cycle)"
+      wait_until 15 visible
+      test "$window" = "$original"
+    done
+    stage='wait for keyboard focus after restoring the window'
+    timeout 10s xdotool windowactivate --sync "$original"
+    wait_until 10 focused
+    stage='quit through the Ctrl+Q accelerator'
     xdotool key --clearmodifiers ctrl+q
     timeout 15s tail --pid="$houyu_pid" -f /dev/null
     wait "$houyu_pid"
+    unset houyu_pid
+    stage='desktop production regression'
     "${electron[@]}" test/desktop-production.cjs "$qa_dir/production"
+    stage='renderer and timetable regression'
     "${electron[@]}" test/desktop-smoke.cjs "$qa_dir/smoke"
     ;;
   keyring)

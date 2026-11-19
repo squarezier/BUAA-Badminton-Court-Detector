@@ -220,7 +220,7 @@ jobs:
           sha256sum -c Linux.sha256
           test "$(cat Linux.source)" = "$GITHUB_SHA"
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./Houyu-Linux-amd64.deb xvfb xauth dbus-x11 gnome-keyring libsecret-tools openbox xdotool desktop-file-utils fonts-noto-cjk
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./Houyu-Linux-amd64.deb xvfb xauth dbus-x11 gnome-keyring libsecret-tools openbox xdotool x11-utils desktop-file-utils fonts-noto-cjk
           dpkg-query -W houyu
       - run: npm ci
       - name: Use the installed Chromium sandbox for source-level regressions
