@@ -20,7 +20,7 @@ case "$mode" in
     wm_pid=$!
     trap 'kill "$wm_pid" 2>/dev/null || true' EXIT
     for attempt in {1..60}; do
-      if xprop -root _NET_SUPPORTING_WM_CHECK | grep -q 'window id'; then break; fi
+      if xdotool getnumdesktops 2>/dev/null | grep -q '^[1-9]'; then break; fi
       sleep .2
     done
     houyu > "$qa_dir/app.log" 2>&1 &
@@ -39,7 +39,16 @@ case "$mode" in
     "${electron[@]}" test/desktop-smoke.cjs "$qa_dir/smoke"
     ;;
   keyring)
-    printf '%s' 'isolated-fixture-password' | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+    export GNOME_KEYRING_CONTROL="$XDG_RUNTIME_DIR/keyring"
+    mkdir -m 700 "$GNOME_KEYRING_CONTROL"
+    dbus-update-activation-environment XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR GNOME_KEYRING_CONTROL
+    gnome-keyring-daemon --foreground --components=secrets --control-directory="$GNOME_KEYRING_CONTROL" >"$qa_dir/keyring.log" 2>&1 &
+    vault_pid=$!
+    trap 'kill "$vault_pid" 2>/dev/null || true' EXIT
+    gdbus wait --session --timeout 15 org.freedesktop.secrets
+    printf '%s' 'isolated-fixture-password' | gnome-keyring-daemon --unlock --control-directory="$GNOME_KEYRING_CONTROL" >/dev/null
+    gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
+      --method org.freedesktop.Secret.Service.SetAlias default /org/freedesktop/secrets/collection/login >/dev/null
     printf '%s' 'isolated-fixture-value' | timeout 25s secret-tool store --label='Houyu test' fixture houyu-test
     test "$(secret-tool lookup fixture houyu-test)" = isolated-fixture-value
     secret-tool clear fixture houyu-test
