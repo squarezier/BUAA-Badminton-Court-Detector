@@ -281,6 +281,7 @@ async function run(win) {
   cases++;
 
   win.close();
+  assert.equal(win.isDestroyed(), false);
   assert.equal(win.isVisible(), false);
   visibleCourts = [1, 2, 4];
   vaultLocked = true;
@@ -296,7 +297,7 @@ async function run(win) {
   assert.match(pushed[1].content, /07:00–08:00 · 综合馆[\s\S]*场号 \*\*4 号\*\*.*¥15\/场/);
   assert.match(pushed[1].content, /venue-reservation\/57/);
   assert.doesNotMatch(pushed[1].content, /1 号|2 号/);
-  app.emit('activate');
+  app.emit(process.platform === 'linux' ? 'second-instance' : 'activate');
   assert.equal(win.isVisible(), true);
   cases++;
 
@@ -493,4 +494,17 @@ app.on('browser-window-created', (_event, window) => {
   });
 });
 
-require('../src/main.cjs');
+if (process.platform === 'linux') {
+  // Some desktop sessions have no usable status notifier. Exercise the same
+  // entry point, replacing only the tray constructor in its Electron import.
+  const { Module } = require('node:module');
+  const desktop = Object.create(require('electron'), {
+    Tray: { value: class { constructor() { throw new Error('System tray unavailable'); } } },
+  });
+  const filename = require.resolve('../src/main.cjs');
+  const entry = new Module(filename, module);
+  entry.require = id => id === 'electron' ? desktop : Module.prototype.require.call(entry, id);
+  entry.load(filename);
+} else {
+  require('../src/main.cjs');
+}

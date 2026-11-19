@@ -30,8 +30,13 @@ case "$mode" in
       exit 1
     fi
     xdotool windowactivate --sync "$window"
-    houyu
+    xdotool key --clearmodifiers alt+F4
+    timeout 10s bash -c 'while xdotool search --onlyvisible --name "^候羽$" >/dev/null; do sleep .1; done'
     kill -0 "$houyu_pid"
+    timeout 15s houyu
+    reopened=$(timeout 15s xdotool search --sync --onlyvisible --name '^候羽$' | head -1)
+    test "$reopened" = "$window"
+    xdotool windowactivate --sync "$reopened"
     xdotool key --clearmodifiers ctrl+q
     timeout 15s tail --pid="$houyu_pid" -f /dev/null
     wait "$houyu_pid"

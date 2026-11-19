@@ -483,7 +483,7 @@ async function initialize() {
   mainWindow.on('minimize', clearDraft);
   powerMonitor.on('lock-screen', clearDraft);
   mainWindow.on('close', event => {
-    if (exiting || !tray) return;
+    if (exiting) return;
     event.preventDefault();
     mainWindow.hide();
   });
