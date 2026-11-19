@@ -22,7 +22,9 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
   };
   const activeDate = () => labelOf(dateButtons().find(button => button.classList.contains('active')));
   const busySelector = '.spaceTable .ivu-spin-fix, .ivu-table-wrapper > .ivu-spin-fix';
-  const busy = () => [...document.querySelectorAll(busySelector)].some(visible);
+  const gridBusy = () => [...document.querySelectorAll(busySelector)].some(visible);
+  const siteBusy = () => [...document.querySelectorAll('.loading.ivu-spin-fix .half-circle-spinner')].some(visible);
+  const busy = () => gridBusy() || siteBusy();
   const validClock = text => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(text);
   const mins = text => Number(text.slice(0, 2)) * 60 + Number(text.slice(3));
 
@@ -45,17 +47,25 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
     const times = [...header.cells].slice(1).map(cell => cell.innerText.match(timePattern)?.slice(1));
     if (!times.length || times.some((range, index) => !range || !range.every(validClock) ||
         mins(range[0]) >= mins(range[1]) || (index > 0 && times[index - 1][1] !== range[0]))) return null;
-    const courtRows = [...table.rows].filter(row => /^\s*\d+号\s*$/.test(row.cells[0]?.innerText ?? ''));
-    const numbers = new Set(courtRows.map(row => Number.parseInt(row.cells[0].innerText, 10)));
-    if (!courtRows.length || numbers.size !== courtRows.length || [...numbers].some(number => number < 1 || number > 120) ||
-        courtRows.some(row => row.cells.length !== times.length + 1) ||
-        [...table.rows].some(row => row.querySelector('.reserveBlock') && !courtRows.includes(row))) return null;
+    const courtRows = new Map();
+    for (const row of table.rows) {
+      const label = row.cells[0]?.innerText.trim() ?? '';
+      const match = /^(B?)([1-9]\d{0,2})号$/.exec(label);
+      if (!match) {
+        if (row.querySelector('.reserveBlock')) return null;
+        continue;
+      }
+      const number = Number(match[2]);
+      const court = match[1] ? `B${number}` : number;
+      if (number > 120 || courtRows.has(court) || row.cells.length !== times.length + 1) return null;
+      courtRows.set(court, row);
+    }
+    if (!courtRows.size) return null;
     const slots = [];
     const reserved = [];
     let colorConflict = false;
     let allAdministrative = true;
-    for (const row of courtRows) {
-      const court = Number.parseInt(row.cells[0].innerText, 10);
+    for (const [court, row] of courtRows) {
       for (const [index, cell] of [...row.cells].slice(1).entries()) {
         const blocks = cell.querySelectorAll('.reserveBlock');
         if (blocks.length !== 1) return null;
@@ -63,7 +73,7 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
         const displayed = block.innerText.trim();
         // The school also uses hourly cells for closures and named activities.
         // They cannot establish a paid booking or a cancellation.
-        const administrative = /活动|占用|教学|比赛|维修|维护|闭馆|停用|暂停开放/.test(displayed);
+        const administrative = /活动|占用|教学|比赛|维修|维护|闭馆|停用|暂停开放|课(?:程|[、，,\s]|$)/.test(displayed);
         if (administrative) {
           if (!visible(block)) allAdministrative = false;
           continue;
@@ -128,8 +138,11 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
 
   async function afterTimetableChange(button, readFrame, paging = false) {
     const timetableData = '.reserveBlock, .ivu-table-tip';
+    const old = paging ? null : readWindow();
     let changedAt = null;
     let wasBusy = false;
+    let siteLoading = false;
+    let siteFinishedAt = null;
     const affectsTimetable = node => node.nodeType === 1 &&
       (node.matches(timetableData) || node.querySelector(timetableData));
     const status = classes => (classes ?? '').split(/\s+/)
@@ -153,7 +166,11 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
       return ['disabled', 'aria-disabled'].includes(attribute) && change.oldValue !== target.getAttribute(attribute);
     };
     function trackLoading() {
-      const loading = busy();
+      const loading = gridBusy();
+      const site = siteBusy();
+      if (site) siteFinishedAt = null;
+      else if (siteLoading) siteFinishedAt = performance.now();
+      siteLoading = site;
       if (loading) {
         wasBusy = true;
         changedAt = null;
@@ -161,10 +178,11 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
         wasBusy = false;
         changedAt = performance.now();
       }
-      return loading;
+      return loading || site;
     }
     const observer = new MutationObserver(changes => {
-      if (!trackLoading() && changes.some(changedData)) changedAt = performance.now();
+      trackLoading();
+      if (changes.some(changedData)) changedAt = performance.now();
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
       attributeOldValue: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'hidden'] });
@@ -175,6 +193,14 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
       const frame = await waitFor(() => {
         if (trackLoading()) return null;
         if (changedAt !== null) return performance.now() - changedAt >= 120 && readFrame();
+        // Selecting a date runs the site's full-page loading indicator, then
+        // its success handler resets the local pager. A reused sold-out grid
+        // needs both that completion and the hour reset in both header rows.
+        if (!paging && old?.mirrored && siteFinishedAt !== null && performance.now() - siteFinishedAt >= 120) {
+          const view = readFrame();
+          if (view?.mirrored && view.date !== old.date && view.first < old.first &&
+              !view.colorConflict && !view.slots.length) return view;
+        }
         // The official same-day pager slices an already loaded grid. Vue can
         // reuse every cell when two sold-out windows have identical contents.
         // Both independent hour rows must agree. A reused green is never moved.

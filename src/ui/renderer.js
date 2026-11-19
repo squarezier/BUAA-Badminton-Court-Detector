@@ -5,6 +5,7 @@ document.documentElement.dataset.platform = app?.platform ?? '';
 const get = id => document.getElementById(id);
 const text = (id, value) => { if (get(id).textContent !== value) get(id).textContent = value; };
 const time = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const timeWithSeconds = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const weekday = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'short' });
 const isoDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 });
@@ -313,16 +314,24 @@ function render() {
   text('selected-venues', venues.map(venueName).join(' · '));
   renderBookingLinks(venues);
   text('count', anyResult ? number.format(slotCount) : '—');
-  text('checked', lastAt ? time.format(lastAt) : '—');
-  text('next', nextAt ? time.format(nextAt) : checking ? '查询中' : '—');
+  const intervalSeconds = Math.round(options.interval * 60);
+  const scanClock = intervalSeconds % 60 ? timeWithSeconds : time;
+  text('checked', lastAt ? scanClock.format(lastAt) : '—');
+  text('next', nextAt ? scanClock.format(nextAt) : checking ? '查询中' : '—');
   text('monitor-action-label', running ? '暂停监控' : '开始监控');
   get('monitor-action').dataset.running = String(running);
   get('monitor-action').disabled = busy || !signedIn;
   get('campus-field').disabled = busy || running;
   get('campus-field').title = running ? '暂停监控后可切换校区' : '';
   for (const input of document.querySelectorAll('input[name="campus"]')) input.checked = input.value === options.campus;
-  if (!intervalDirty) get('interval').value = String(options.interval);
+  if (!intervalDirty) {
+    const useMinutes = intervalSeconds % 60 === 0;
+    get('interval-unit').value = useMinutes ? 'minutes' : 'seconds';
+    get('interval').value = String(useMinutes ? intervalSeconds / 60 : intervalSeconds);
+  }
+  updateIntervalBounds();
   get('interval').disabled = busy;
+  get('interval-unit').disabled = busy;
   get('save-interval').disabled = busy || !intervalDirty;
   text('schedule-title-label', !running && anyResult ? '上次核验空场' : '当前空场');
 
@@ -386,6 +395,12 @@ function receive(state) {
   render();
 }
 
+function updateIntervalBounds() {
+  const seconds = get('interval-unit').value === 'seconds';
+  get('interval').max = seconds ? '86400' : '1440';
+  get('interval').title = seconds ? '1–86400 秒' : '1–1440 分钟';
+}
+
 function updateOptions(patch) {
   const options = { ...current.options, ...patch };
   return act(() => app.saveOptions(options));
@@ -410,16 +425,24 @@ if (!app) {
     await app.saveTarget(current.options.campus, null);
     showToast('已恢复此校区的全部退订提醒。');
   }));
-  get('interval').addEventListener('input', () => { intervalDirty = true; get('save-interval').disabled = busy; });
+  const editInterval = () => {
+    intervalDirty = true;
+    updateIntervalBounds();
+    get('save-interval').disabled = busy;
+  };
+  get('interval').addEventListener('input', editInterval);
+  get('interval-unit').addEventListener('change', editInterval);
   get('interval-form').addEventListener('submit', event => {
     event.preventDefault();
     const input = get('interval');
     if (!current || !input.reportValidity()) return;
-    const options = { ...current.options, interval: input.valueAsNumber };
+    const seconds = get('interval-unit').value === 'seconds';
+    const value = input.valueAsNumber;
+    const options = { ...current.options, interval: seconds ? value / 60 : value };
     void act(async () => {
       await app.saveOptions(options);
       intervalDirty = false;
-      showToast(`检查频率已设为每 ${options.interval} 分钟。`);
+      showToast(`检查间隔已设为 ${value} ${seconds ? '秒' : '分钟'}。`);
     });
   });
   for (const input of document.querySelectorAll('input[name="campus"]')) {

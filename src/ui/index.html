@@ -61,7 +61,13 @@
               </fieldset>
               <form id="interval-form">
                 <label for="interval">检查间隔</label>
-                <div class="interval-entry"><div class="unit-field"><input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required title="1–1440 分钟"><span>分钟</span></div><button class="button" type="submit" id="save-interval">保存</button></div>
+                <div class="interval-entry">
+                  <div class="unit-field">
+                    <input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required>
+                    <select id="interval-unit" aria-label="检查间隔单位"><option value="minutes">分钟</option><option value="seconds">秒</option></select>
+                  </div>
+                  <button class="button" type="submit" id="save-interval">保存</button>
+                </div>
               </form>
             </section>
             <section class="shortcut" aria-labelledby="shortcut-title">

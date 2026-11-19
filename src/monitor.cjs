@@ -1,12 +1,21 @@
 'use strict';
 
-const { CAMPUSES, VENUES, groupSlots, matchesTarget, nextBookingRelease, slotKey, startsAt } = require('./courts.cjs');
+const { CAMPUSES, VENUES, groupSlots, matchesTarget, nextBookingRelease, intervalSeconds, slotKey, startsAt } = require('./courts.cjs');
 const { notice, noticeBatches } = require('./push.cjs');
 
 class UserError extends Error {
   constructor(message, code = 'general') {
     super(message);
     this.code = code;
+  }
+}
+
+class CampusRateLimit extends UserError {
+  constructor(retryAfter, now = Date.now()) {
+    super('官网请求限流，已延后下次检查。', 'rate-limit');
+    const value = typeof retryAfter === 'string' ? retryAfter.trim() : '';
+    const delay = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - now;
+    this.retryAfterMs = Number.isSafeInteger(now + delay) && delay > 60000 ? delay : 60000;
   }
 }
 
@@ -26,6 +35,7 @@ class CourtMonitor {
     this.timer = null;
     this.task = null;
     this.cyclesWithErrors = 0;
+    this.siteNotBefore = 0;
     this.snapshots = new Map();
     this.previousReservations = new Map();
     this.pending = new Map();
@@ -148,15 +158,17 @@ class CourtMonitor {
     if (this.running && !this.suspended && !this.task) {
       const now = this.now();
       this.nextRegularAt = now + delay;
-      this.nextAt = Math.min(this.nextRegularAt, nextBookingRelease(now));
-      this.timer = setTimeout(() => void this.check(), this.nextAt - now);
+      this.nextAt = Math.max(this.siteNotBefore, Math.min(this.nextRegularAt, nextBookingRelease(now)));
+      this.timer = setTimeout(() => void this.check(), Math.min(2147483647, this.nextAt - now));
     }
     this.emit();
   }
 
   pollDelay() {
-    const interval = this.options.interval * 60000;
-    return Math.min(interval * 2 ** this.cyclesWithErrors, Math.max(interval, 15 * 60000));
+    const interval = intervalSeconds(this.options.interval) * 1000;
+    if (!this.cyclesWithErrors) return interval;
+    const firstRetry = Math.max(60000, interval * 2);
+    return Math.min(firstRetry * 2 ** (this.cyclesWithErrors - 1), Math.max(interval, 15 * 60000));
   }
 
   applySnapshot(id, sample) {
@@ -218,6 +230,10 @@ class CourtMonitor {
 
   async check() {
     if (!this.running || this.suspended || this.task) return;
+    if (this.now() < this.siteNotBefore) {
+      this.schedule(this.siteNotBefore - this.now());
+      return;
+    }
     clearTimeout(this.timer);
     this.timer = null;
     const task = new AbortController();
@@ -231,9 +247,11 @@ class CourtMonitor {
     this.emit();
     const failed = new Set();
     const venueIds = CAMPUSES[this.options.campus].venues;
+    let siteLimit;
     try {
       for (const id of venueIds) {
         try {
+          if (siteLimit) throw siteLimit;
           const sample = await this.checkVenue(id, task.signal);
           if (task.signal.aborted) return;
           this.applySnapshot(id, sample);
@@ -242,6 +260,10 @@ class CourtMonitor {
           if (error instanceof UserError && error.code === 'auth') {
             this.setAuth('expired');
             return;
+          }
+          if (error instanceof CampusRateLimit && !siteLimit) {
+            siteLimit = error;
+            this.siteNotBefore = this.now() + error.retryAfterMs;
           }
           failed.add(id);
           const previous = this.snapshots.get(id) ?? { at: null, slots: [], dates: [] };
@@ -266,4 +288,4 @@ class CourtMonitor {
   }
 }
 
-module.exports = { CourtMonitor, UserError };
+module.exports = { CourtMonitor, UserError, CampusRateLimit };

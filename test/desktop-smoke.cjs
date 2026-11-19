@@ -24,9 +24,9 @@ const auditedVenues = [
 
 function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
   decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [], blankAfterClosing = false,
-  activityDay = -1, brokenDay = -1, reuseOnDay = -1, mirrored = false, unresolvedDay = -1 }) {
+  activityDay = -1, brokenDay = -1, reuseOnDay = -1, mirrored = false, unresolvedDay = -1, reuseOnDate = -1 }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
-  const table = document.querySelector('table');
+  const table = document.querySelector('.schedule-grid');
   const head = table.createTHead();
   const body = table.createTBody();
   const foot = mirrored ? table.createTFoot() : null;
@@ -99,6 +99,14 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
     button.onclick = () => {
       buttons[selected].classList.remove('active');
       button.classList.add('active');
+      if (index === reuseOnDate) {
+        const spin = document.createElement('div');
+        spin.className = 'loading ivu-spin-fix';
+        spin.innerHTML = '<div class="half-circle-spinner">读取中</div>';
+        document.body.append(spin);
+        setTimeout(() => { selected = index; page = 0; drawHeader(); spin.remove(); }, switchDelay);
+        return;
+      }
       if (index === unresolvedDay) {
         body.replaceChildren();
         return;
@@ -124,7 +132,7 @@ async function run() {
     const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved,.reservation{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
       <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div><div class="proContent">${spec.notice ?? ''}</div>
       <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div ${spec.disableThirdDay ? 'aria-disabled="true"' : ''}><span>11月20日</span></div></div>
-      <div class="spaceTable"><table></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
+      <div class="spaceTable">${spec.fixedCourts ? '<table><tr><td>场地</td></tr>' + spec.courts.map(id => '<tr><td>' + id + '号</td></tr>').join('') + '<tr><td>场地</td></tr></table>' : ''}<table class="schedule-grid"></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
     await page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHtml)}`);
     assert.equal(await page.webContents.executeJavaScriptInIsolatedWorld(1201, [{ code: `(${signedInOnBookingSite.toString()})()` }]), true);
     const readOptions = { bookableLabels: [...calendarDates(at).keys()], nowClock: beijingClock(at) };
@@ -191,6 +199,23 @@ async function run() {
   assert.deepEqual(separateStates.days[1].slots.filter(slot => slot.start === '09:00').map(slot => slot.court), [4]);
   assert.ok(!separateStates.days[1].reserved.some(slot => slot.start === '10:00' && slot.court === 1));
   assert.deepEqual(separateStates.days[1].reserved.filter(slot => slot.start === '11:00').map(slot => slot.court), [3, 4]);
+  const shaheCourts = [1, 2, 3, 4, 5, 6, 7, 8, 'B1', 'B2', 'B3', 'B4', 'B5', 'B6'];
+  const shaheCourses = await readFixture({ opening: 8, courts: shaheCourts, fixedCourts: true, mirrored: true,
+    slots: [[1, 12, [1, 'B1', 'B6']]], otherCells: [
+      { day: 1, hour: 9, court: 1, status: 'reserved', text: '羽毛球课' },
+      { day: 1, hour: 9, court: 'B1', status: 'free', text: '体能减脂课' },
+      { day: 1, hour: 9, court: 'B6', status: 'disabled', text: '气排球课、拳击课' },
+    ] });
+  assert.equal(shaheCourses.unread, undefined);
+  assert.deepEqual(shaheCourses.days[1].slots.map(slot => slot.court), [1, 'B1', 'B6']);
+  assert.deepEqual(shaheCourses.days[1].reserved.filter(slot => slot.start === '09:00').map(slot => slot.court),
+    shaheCourts.filter(id => ![1, 'B1', 'B6'].includes(id)));
+  const repeatedDate = await readFixture({ opening: 7, courts: [1, 'B1'], slots: [], mirrored: true, reuseOnDate: 1 });
+  assert.equal(repeatedDate.unread, undefined);
+  assert.equal(repeatedDate.days[1].reserved.length, 30, 'a finished day load and two reset hour headers verify a reused sold-out grid');
+  const staleDate = await readFixture({ opening: 7, courts: [1], slots: [[0, 18, [1]]], mirrored: true, reuseOnDate: 1 });
+  assert.deepEqual(staleDate.days.map(day => day.label), ['11月18日'], 'a completed spinner and new date cannot move old green cells to tomorrow');
+  assert.deepEqual(staleDate.unread.map(day => day.label), ['11月19日', '11月20日']);
   const reused = await readFixture({ opening: 7, courts: [1], slots: [], reuseOnDay: 1, mirrored: true });
   assert.equal(reused.unread, undefined);
   assert.equal(reused.days[1].slots.length, 0);
@@ -288,6 +313,19 @@ async function run() {
     'a disabled native radio does not cover the selected campus label');
   await paint();
   await capture('monitor.png', '.monitor-grid');
+  window.webContents.send('courtwatch:state', { ...state, options: { ...state.options, interval: 1 / 60 } });
+  await paint();
+  assert.deepEqual(await js("[document.querySelector('#interval').value, document.querySelector('#interval-unit').value, document.querySelector('#next').textContent]"),
+    ['1', 'seconds', '14:10:00']);
+  window.webContents.send('courtwatch:state', {
+    ...state, options: { ...state.options, campus: 'shahe' }, venues: [{ id: '57', label: '综合馆', dates: state.venues[0].dates, at: 1 }],
+    rows: [{ ...state.rows[0], venue: '57', courts: [1, 'B1', 'B2', 'B6'] }],
+  });
+  await paint();
+  assert.deepEqual(await js("[...document.querySelectorAll('.court-number')].map(mark => mark.textContent)"), ['1', 'B1', 'B2', 'B6']);
+  assert.equal(await js("document.querySelector('.court-numbers').getAttribute('aria-label')"), '1、B1、B2、B6号');
+  window.webContents.send('courtwatch:state', state);
+  await paint();
   async function theme(value) {
     nativeTheme.themeSource = value;
     await js(`new Promise((resolve, reject) => {
@@ -354,6 +392,8 @@ async function run() {
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');
+  assert.ok(await js("document.querySelector('#interval').getBoundingClientRect().width >= 42 && document.querySelector('#interval-unit').getBoundingClientRect().width >= 35"),
+    'both parts of the interval control remain legible at minimum width');
   window.webContents.setZoomFactor(2);
   await paint();
   assert.equal(await js(`document.documentElement.scrollWidth <= innerWidth &&

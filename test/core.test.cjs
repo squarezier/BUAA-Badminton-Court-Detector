@@ -5,7 +5,7 @@ const { test } = require('node:test');
 const { link, mkdtemp, readFile, rm, stat, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { validatedSnapshot, calendarDates } = require('../src/courts.cjs');
+const { validatedSnapshot, calendarDates, groupSlots, slotKey } = require('../src/courts.cjs');
 const { sendPush, notice } = require('../src/push.cjs');
 const { feishuConnection, decodePushConnection } = require('../src/push-connection.cjs');
 const { CourtMonitor, UserError } = require('../src/monitor.cjs');
@@ -14,6 +14,47 @@ const { Preferences } = require('../src/preferences.cjs');
 const now = Date.parse('2026-11-18T13:10:00+08:00');
 const slot = (court, venue = '57') => ({ venue, date: '2026-11-18', start: '17:00', end: '18:00', court, price: 25 });
 const sample = (...slots) => ({ dates: ['2026-11-18'], slots });
+
+test('Shahe B1–B6 and numbered courts keep distinct identities in snapshots and cards', () => {
+  const read = (id, courts) => validatedSnapshot(id, [{ label: '11月18日', slots: courts.map(court => slot(court, id)) }], now);
+  const rows = read('57', ['B6', 'B2', 12, 2, 'B1', 1, 'B2', 'B5', 'B3', 'B4']).slots;
+  assert.equal(rows.length, 9);
+  assert.notEqual(slotKey(slot(1)), slotKey(slot('B1')));
+  assert.deepEqual(groupSlots(rows)[0].courts, [1, 2, 12, 'B1', 'B2', 'B3', 'B4', 'B5', 'B6']);
+  const card = notice('shahe', rows, now).feishuCard;
+  assert.match(card.body.elements[1].content, /场号 \*\*1、2、12、B1、B2、B3、B4、B5、B6 号\*\*/);
+  for (const other of ['38', '39']) assert.throws(() => read(other, ['B1']));
+  for (const invalid of ['1', 'B0', 'B7', 'B01', 'B1号', 'A1', 'b1']) assert.throws(() => read('57', [invalid]));
+});
+
+test('an already green numbered court cannot trigger a Shahe B-court cancellation', async t => {
+  let booked = ['B1'];
+  let green = [1];
+  const pushes = [];
+  const target = { date: '2026-11-18', start: '17:00', end: '18:00' };
+  const monitor = new CourtMonitor({
+    options: { campus: 'shahe', interval: 1 / 60, targets: { shahe: target } }, now: () => now, onChange() {},
+    async checkVenue(id) {
+      return validatedSnapshot(id, [{ label: '11月18日', slots: green.map(court => slot(court)), reserved: booked.map(court => slot(court)) }], now);
+    },
+    async dispatch(message) { pushes.push(message); return { kind: 'accepted', text: 'accepted' }; },
+  });
+  t.after(() => monitor.stop());
+  monitor.setAuth('signed-in');
+  monitor.setDelivery(true, true);
+  monitor.start();
+  await monitor.check();
+  await monitor.check();
+  assert.equal(pushes.length, 0);
+  green = ['B1', 1];
+  booked = [];
+  await monitor.check();
+  await monitor.check();
+  assert.equal(pushes.length, 1);
+  const card = pushes[0].feishuCard;
+  assert.match(card.header.title.content, /目标场次重新可约.*沙河校区 1 场次/);
+  assert.match(card.body.elements[1].content, /场号 \*\*B1 号\*\*/);
+});
 
 test('normalizes Beijing dates across a year boundary and validates visible court data', () => {
   const date = Date.parse('2026-12-31T23:50:00+08:00');

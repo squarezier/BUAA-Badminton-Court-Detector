@@ -6,11 +6,11 @@ const { mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { productName, version } = require('../package.json');
 const {
-  CAMPUS_ORIGIN, LOGIN_URL, CAMPUSES, VENUES, venueUrl, validOptions, validTarget, targetFields,
+  CAMPUS_ORIGIN, LOGIN_URL, CAMPUSES, VENUES, venueUrl, intervalSeconds, validOptions, validTarget, targetFields,
   calendarDates, beijingClock, validatedSnapshot,
 } = require('./courts.cjs');
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
-const { CourtMonitor, UserError } = require('./monitor.cjs');
+const { CourtMonitor, UserError, CampusRateLimit } = require('./monitor.cjs');
 const { Preferences } = require('./preferences.cjs');
 const { feishuConnection } = require('./push-connection.cjs');
 const { sendPush, testNotice } = require('./push.cjs');
@@ -32,6 +32,7 @@ let sending = false;
 let editing = false;
 let changingConnection = false;
 const nextPushTestAt = new Map();
+const scanLimits = new Map();
 
 // Check before creating any window, session, or opening the system vault.
 if (app.isPackaged) {
@@ -156,15 +157,19 @@ async function readVenue(id, signal) {
     webPreferences: { ...webPreferences, session: campusSession, backgroundThrottling: false },
   });
   secureCampusWindow(win, false);
-  const close = () => { if (!win.isDestroyed()) win.destroy(); };
-  const timeout = setTimeout(close, 32000);
-  signal.addEventListener('abort', close, { once: true });
+  const contentsId = win.webContents.id;
+  let interrupt;
+  const interrupted = new Promise((_resolve, reject) => { interrupt = reject; });
+  const cancel = () => interrupt(signal.reason);
+  scanLimits.set(contentsId, retryAfter => interrupt(new CampusRateLimit(retryAfter)));
+  const timeout = setTimeout(() => interrupt(new Error('Timetable timed out')), 32000);
+  signal.addEventListener('abort', cancel, { once: true });
   const verifyDestination = () => {
     const url = win.webContents.getURL();
     if (onCampusLogin(url)) throw new UserError('北航会话已失效，请重新登录。', 'auth');
     if (url !== target) throw new UserError('官网跳转异常，请在预约页查看。');
   };
-  try {
+  async function inspect() {
     await win.loadURL(target);
     signal.throwIfAborted();
     verifyDestination();
@@ -179,14 +184,18 @@ async function readVenue(id, signal) {
       throw new UserError('官网时段表暂不可读，请稍后重试。');
     }
     return validatedSnapshot(id, result.days, started, result.unread);
+  }
+  try {
+    return await Promise.race([interrupted, inspect()]);
   } catch (error) {
     if (error instanceof UserError || signal.aborted) throw error;
     if (!win.isDestroyed() && onCampusLogin(win.webContents.getURL())) throw new UserError('北航会话已失效，请重新登录。', 'auth');
     throw new UserError('暂时无法连接官网或读取时段表。');
   } finally {
     clearTimeout(timeout);
-    signal.removeEventListener('abort', close);
-    close();
+    scanLimits.delete(contentsId);
+    signal.removeEventListener('abort', cancel);
+    if (!win.isDestroyed()) win.destroy();
   }
 }
 
@@ -365,7 +374,7 @@ function setupIpc() {
   handle('options', async options => {
     if (!validOptions(options)) throw new UserError('请选择有效的校区和检查频率。');
     if (monitor.running && options.campus !== monitor.options.campus) throw new UserError('请先暂停监控再切换校区。');
-    await saveMonitorOptions({ ...monitor.options, campus: options.campus, interval: options.interval });
+    await saveMonitorOptions({ ...monitor.options, campus: options.campus, interval: intervalSeconds(options.interval) / 60 });
   });
   handle('target', async value => {
     const { campus, target } = value ?? {};
@@ -410,6 +419,13 @@ async function initialize() {
   uiSession = session.fromPartition('courtwatch-ui', { cache: false });
   noPermissions(campusSession);
   noPermissions(uiSession);
+  campusSession.webRequest.onResponseStarted({ urls: [CAMPUS_ORIGIN + '/*'] }, details => {
+    if (details.statusCode !== 429 || !['mainFrame', 'xhr'].includes(details.resourceType)) return;
+    const limited = scanLimits.get(details.webContentsId);
+    if (!limited) return;
+    const header = Object.entries(details.responseHeaders ?? {}).find(([name]) => name.toLowerCase() === 'retry-after');
+    limited(header?.[1]?.[0]);
+  });
   campusSession.webRequest.onBeforeRequest((details, callback) => {
     const passiveAsset = details.method === 'GET' && ['image', 'font', 'stylesheet', 'media'].includes(details.resourceType);
     const allowed = campusPage(details.url) || (passiveAsset && campusResource(details.url));

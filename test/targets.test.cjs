@@ -177,18 +177,19 @@ test('all reopened groups reach Feishu across cards, without repeating an accept
 });
 
 test('saturated cards preserve complete court lists and fit the signed webhook payload', () => {
-  const crowded = Array.from({ length: 36 }, (_, minute) => Array.from({ length: 120 }, (_, i) =>
-    slot({ start: '18:' + String(minute).padStart(2, '0'), end: '19:01', court: i + 1, price: 9998.99999999999 })
+  const courtIds = [...Array.from({ length: 120 }, (_, i) => i + 1), 'B1', 'B2', 'B3', 'B4', 'B5', 'B6'];
+  const crowded = Array.from({ length: 36 }, (_, minute) => courtIds.map(court =>
+    slot({ venue: '57', start: '18:' + String(minute).padStart(2, '0'), end: '19:01', court, price: 9998.99999999999 })
   )).flat();
   const batches = [...noticeBatches(crowded)];
   assert.equal(batches.length, 2);
   assert.equal(batches.flat().length, crowded.length);
   for (const part of batches) {
-    const card = notice('xueyuanlu', part, initialTime, true).feishuCard;
+    const card = notice('shahe', part, initialTime, true).feishuCard;
     const body = JSON.stringify({ msg_type: 'interactive', card, timestamp: '9999999999', sign: 'A'.repeat(44) });
     assert.ok(Buffer.byteLength(body) <= 20000);
     assert.doesNotMatch(body, /另有/);
-    assert.equal([...body.matchAll(/119、120 号/g)].length, 18);
+    assert.equal([...body.matchAll(/119、120、B1、B2、B3、B4、B5、B6 号/g)].length, 18);
   }
 });
 
@@ -206,6 +207,10 @@ test('preferences migrate older files and restore each campus target independent
   const next = new Preferences(file, {});
   await next.load();
   assert.deepEqual(next.options, { ...legacy, targets });
+  await next.saveOptions({ ...legacy, interval: 1 / 60, targets });
+  const seconds = new Preferences(file, {});
+  await seconds.load();
+  assert.deepEqual(seconds.options, { ...legacy, interval: 1 / 60, targets });
   await writeFile(file, JSON.stringify({ options: { ...legacy, targets: { ...targets, xueyuanlu: { ...rule, end: 'bad' } } } }));
   await next.load();
   assert.equal(next.options.targets.xueyuanlu, null);

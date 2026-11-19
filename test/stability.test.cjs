@@ -5,11 +5,11 @@ const { test } = require('node:test');
 const { mkdtemp, readFile, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { CourtMonitor, UserError } = require('../src/monitor.cjs');
+const { CourtMonitor, UserError, CampusRateLimit } = require('../src/monitor.cjs');
 const { sendPush } = require('../src/push.cjs');
 const { decodePushConnection, feishuConnection } = require('../src/push-connection.cjs');
 const { Preferences } = require('../src/preferences.cjs');
-const { beijingDay, nextBookingRelease, slotKey, validOptions } = require('../src/courts.cjs');
+const { beijingDay, nextBookingRelease, slotKey, validOptions, intervalSeconds } = require('../src/courts.cjs');
 
 const baselineTime = Date.parse('2026-11-18T13:10:00+08:00');
 const slot = (court, venue = '57', start = '17:00') => ({ venue, date: '2026-11-18', start, end: '18:00', court, price: 25 });
@@ -322,9 +322,72 @@ test('a failed settings save can be retried without corrupting the previous file
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).options, { campus: 'xueyuanlu', interval: 2 });
 });
 
-test('custom intervals accept whole minutes within the supported range', () => {
-  for (const interval of [1, 7, 22, 1440]) assert.equal(validOptions({ campus: 'shahe', interval }), true);
-  for (const interval of [0, 1.5, 1441, '5', NaN, Infinity]) assert.equal(validOptions({ campus: 'shahe', interval }), false);
+test('one second through 24 hours round-trip as exact whole seconds in the minute-based settings', () => {
+  for (let seconds = 1; seconds <= 86400; seconds++) assert.equal(intervalSeconds(seconds / 60), seconds);
+  for (const interval of [1 / 60, 7, 1.5, 22, 1440]) assert.equal(validOptions({ campus: 'shahe', interval }), true);
+  for (const interval of [0, 0.5 / 60, 1.1 / 60, 86401 / 60, '5', NaN, Infinity]) {
+    assert.equal(validOptions({ campus: 'shahe', interval }), false);
+  }
+});
+
+test('one-second polling is serial, waits after a slow scan, and backs off on outages', async t => {
+  let now = baselineTime;
+  const pending = deferred();
+  let attempts = 0;
+  let offline = false;
+  const monitor = setup(t, { options: { campus: 'shahe', interval: 1 / 60 }, now: () => now,
+    async checkVenue() {
+      attempts++;
+      if (offline) throw new Error('offline');
+      return pending.promise;
+    } });
+  const underway = monitor.check();
+  now += 9000;
+  await monitor.check();
+  assert.equal(attempts, 1);
+  assert.equal(monitor.state().nextAt, null);
+  pending.resolve(stamped());
+  await underway;
+  assert.equal(monitor.state().nextAt, now + 1000);
+  offline = true;
+  for (const delay of [60000, 120000, 240000]) {
+    now = monitor.state().nextAt;
+    await monitor.check();
+    assert.equal(monitor.state().nextAt, now + delay);
+  }
+  offline = false;
+  now = monitor.state().nextAt;
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, now + 1000);
+});
+
+test('campus HTTP 429 pauses both halls, including across 07:00, resume, and interval edits', async t => {
+  const release = Date.parse('2026-11-19T07:00:00+08:00');
+  let now = release - 500;
+  const until = now + 180000;
+  const calls = [];
+  const monitor = setup(t, { options: { campus: 'xueyuanlu', interval: 1 / 60 }, now: () => now,
+    async checkVenue(id) {
+      calls.push(id);
+      if (calls.length === 1) throw new CampusRateLimit('180', now);
+      return stamped();
+    } });
+  await monitor.check();
+  assert.deepEqual(calls, ['38']);
+  assert.equal(monitor.state().nextAt, until);
+  now = release;
+  monitor.setSuspended(true);
+  monitor.setSuspended(false);
+  monitor.setOptions({ ...monitor.options, interval: 2 / 60 });
+  await monitor.check();
+  assert.equal(monitor.state().nextAt, until);
+  assert.deepEqual(calls, ['38']);
+  now = until;
+  await monitor.check();
+  assert.deepEqual(calls, ['38', '38', '39']);
+  assert.equal(monitor.state().nextAt, until + 2000);
+  for (const value of ['', '0', 'invalid']) assert.equal(new CampusRateLimit(value, release).retryAfterMs, 60000);
+  assert.equal(new CampusRateLimit(new Date(release + 300000).toUTCString(), release).retryAfterMs, 300000);
 });
 
 test('changing the interval while idle recomputes the next check from the last completed poll', async t => {

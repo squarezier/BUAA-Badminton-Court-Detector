@@ -223,6 +223,30 @@ async function run(win) {
   cases++;
 
   await click('[data-page=monitor]');
+  const saveCadence = (value, unit) => js(`
+    {
+      const picker = document.querySelector('#interval-unit');
+      const field = document.querySelector('#interval');
+      picker.value = ${JSON.stringify(unit)};
+      picker.dispatchEvent(new Event('change'));
+      field.value = ${JSON.stringify(value)};
+      field.dispatchEvent(new Event('input'));
+      document.querySelector('#interval-form').requestSubmit();
+    }
+  `);
+  await saveCadence('1', 'seconds');
+  await waitFor(async view => view.options.interval === 1 / 60 && await js("!document.querySelector('#interval').disabled"),
+    'one-second interval saved through the unit picker');
+  assert.equal(JSON.parse(fs.readFileSync(settings, 'utf8')).options.interval, 1 / 60);
+  assert.equal(await js("document.querySelector('#interval-unit').value"), 'seconds');
+  await saveCadence('0', 'seconds');
+  assert.equal(await js("document.querySelector('#interval').validity.rangeUnderflow"), true);
+  assert.equal((await state()).options.interval, 1 / 60);
+  await saveCadence('120', 'seconds');
+  await waitFor(async view => view.options.interval === 2 && await js("document.querySelector('#interval-unit').value === 'minutes'"),
+    'a whole number of minutes returns to the familiar unit');
+  assert.equal(await js("document.querySelector('#interval').value"), '2');
+  cases++;
   await click('#monitor-action');
   await waitFor(view => view.running && !view.checking && view.slotCount === 1, 'first green baseline');
   assert.equal(pushed.length, 1);

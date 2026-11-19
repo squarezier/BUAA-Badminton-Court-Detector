@@ -71,8 +71,8 @@ function escapeHtml(value) {
 function* noticeBatches(slots) {
   const groups = groupSlots(slots);
   for (let i = 0; i < groups.length; i += GROUPS_PER_NOTICE) {
-    // A complete group has at most 120 validated court numbers. Eighteen such rows
-    // fit inside both the Feishu detail budget and the legacy channel summary.
+    // A group can include numeric courts plus Shahe's B1–B6. Keep the entire
+    // set of court IDs together when paginating a notification.
     yield groups.slice(i, i + GROUPS_PER_NOTICE).flatMap(({ courts, ...group }) => courts.map(court => ({ ...group, court })));
   }
 }

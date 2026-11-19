@@ -5,7 +5,7 @@ const LOGIN_URL = `${CAMPUS_ORIGIN}/venue/login`;
 const BEIJING = 'Asia/Shanghai';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BOOKING_RELEASE_OFFSET = 7 * 60 * 60 * 1000;
-const MIN_INTERVAL = 1;
+const MIN_INTERVAL = 1 / 60;
 const MAX_INTERVAL = 1440;
 const VENUES = Object.freeze({
   '38': { id: '38', campus: 'xueyuanlu', label: '体育馆主馆' },
@@ -23,6 +23,7 @@ const dayFormat = new Intl.DateTimeFormat('en-CA', {
 const clockFormat = new Intl.DateTimeFormat('zh-CN', {
   timeZone: BEIJING, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
+const courtOrder = new Intl.Collator('en', { numeric: true });
 
 function venueUrl(id) {
   if (!Object.hasOwn(VENUES, id)) throw new Error('未知场馆。');
@@ -56,9 +57,17 @@ function calendarDates(at) {
   }));
 }
 
+// Stored intervals are expressed in minutes, including legacy whole-minute settings.
+function intervalSeconds(minutes) {
+  if (!Number.isFinite(minutes) || minutes < MIN_INTERVAL || minutes > MAX_INTERVAL) return null;
+  const seconds = minutes * 60;
+  const whole = Math.round(seconds);
+  return Math.abs(seconds - whole) <= Number.EPSILON * seconds ? whole : null;
+}
+
 function validOptions(value) {
   return Boolean(value && typeof value.campus === 'string' && Object.hasOwn(CAMPUSES, value.campus) &&
-    Number.isInteger(value.interval) && value.interval >= MIN_INTERVAL && value.interval <= MAX_INTERVAL);
+    intervalSeconds(value.interval) !== null);
 }
 
 function parseToken(value) {
@@ -97,8 +106,10 @@ function slotKey({ venue, date, start, end, court }) {
   return `${venue}/${date}/${start}/${end}/${court}`;
 }
 
-function validatedCourt({ court, start, end }) {
-  if (!Number.isInteger(court) || court < 1 || court > 120 || !validTime(start) || !validTime(end) || start >= end) {
+function validatedCourt(id, { court, start, end }) {
+  const numbered = Number.isInteger(court) && court >= 1 && court <= 120;
+  const shaheB = id === '57' && typeof court === 'string' && court.length === 2 && /^B[1-6]$/.test(court);
+  if ((!numbered && !shaheB) || !validTime(start) || !validTime(end) || start >= end) {
     throw new Error('官网时段或场号格式异常。');
   }
   return { court, start, end };
@@ -121,13 +132,13 @@ function validatedSnapshot(id, days, started, unread = []) {
     for (const row of day.slots) {
       const { price } = row;
       if (!Number.isFinite(price) || price < 0 || price > 9999) throw new Error('官网场地价格格式异常。');
-      const slot = { venue: id, date, ...validatedCourt(row), price };
+      const slot = { venue: id, date, ...validatedCourt(id, row), price };
       const key = slotKey(slot);
       if (slots.has(key) && slots.get(key).price !== price) throw new Error('官网同一场次出现不同价格。');
       slots.set(key, slot);
     }
     for (const row of booked) {
-      const slot = { venue: id, date, ...validatedCourt(row) };
+      const slot = { venue: id, date, ...validatedCourt(id, row) };
       const key = slotKey(slot);
       if (slots.has(key)) throw new Error('官网同一场次出现互相冲突的状态。');
       reserved.set(key, slot);
@@ -152,12 +163,12 @@ function groupSlots(slots) {
     groups.get(key).courts.push(court);
   }
   return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, group]) => ({
-    ...group, courts: [...new Set(group.courts)].sort((a, b) => a - b),
+    ...group, courts: [...new Set(group.courts)].sort(courtOrder.compare),
   }));
 }
 
 module.exports = {
   CAMPUS_ORIGIN, LOGIN_URL, BEIJING, CAMPUSES, VENUES, MIN_INTERVAL, MAX_INTERVAL,
-  venueUrl, beijingDay, beijingClock, validOptions, validTarget, targetFields, matchesTarget,
+  venueUrl, beijingDay, beijingClock, intervalSeconds, validOptions, validTarget, targetFields, matchesTarget,
   parseToken, calendarDates, nextBookingRelease, startsAt, slotKey, validatedSnapshot, groupSlots,
 };
