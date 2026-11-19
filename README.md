@@ -4,15 +4,15 @@
 
 想打周五晚上的球，可以在候羽里选「学院路」「周五」「18:00–20:00」。候羽在主馆或训练馆看到符合条件的退订，就会把时段和场号发到飞书群。点消息底部的场馆名，去北航官网订场。
 
-## 下载 v2.0.1
+## 下载 v2.1.0
 
 | 电脑 | 下载 | 打开 |
 | --- | --- | --- |
-| <img src="docs/platforms/apple.svg" width="16" alt=""> Mac · macOS 13 及以上 | [Apple 芯片（M 系列）](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-macOS-arm64.zip) · [Intel 芯片](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-macOS-x64.zip) | 解压，打开「候羽」 |
-| <img src="docs/platforms/windows.svg" width="16" alt=""> Windows 10 / 11 | [Windows x64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-Windows-x64.zip) | 解压整个文件夹，打开 `Houyu.exe` |
-| <img src="docs/platforms/linux.svg" width="16" alt=""> Ubuntu 22.04 / 24.04 | [Linux amd64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-Linux-amd64.deb) | 安装 DEB，在应用菜单打开「候羽」 |
+| <img src="docs/platforms/apple.svg" width="16" alt=""> Mac · macOS 13 及以上 | [Apple 芯片（M 系列）](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-macOS-arm64.zip) · [Intel 芯片](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-macOS-x64.zip) | 解压，打开「候羽」 |
+| <img src="docs/platforms/windows.svg" width="16" alt=""> Windows 10 / 11 | [Windows x64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-Windows-x64.zip) | 解压整个文件夹，打开 `Houyu.exe` |
+| <img src="docs/platforms/linux.svg" width="16" alt=""> Ubuntu 22.04 / 24.04 | [Linux amd64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-Linux-amd64.deb) | 安装 DEB，在应用菜单打开「候羽」 |
 
-[版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v2.0.1) · [SHA-256 校验文件](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-SHA256SUMS.txt) · [源码包](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.0.1/Houyu-Source.zip)
+[版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v2.1.0) · [SHA-256 校验文件](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-SHA256SUMS.txt) · [源码包](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.1.0/Houyu-Source.zip)
 
 ## 使用手册
 
@@ -61,7 +61,7 @@
 
 打开 **场地监控**，选 **学院路** 或 **沙河**，点 **开始监控**。想等周五晚上的球，就从左栏进入 **提醒目标**，选好日期、开始和结束时间，点 **保存目标**。同一校区里，落在这段时间内的所有场号都算。
 
-窗口较窄或界面放大时，左栏会收起。点顶部的 **导航与设置** 就能展开。
+窗口较窄或界面放大时，左栏会收起。点顶部的 **导航与设置** 就能展开。 系统开启「减少动态效果」后，切页和展开侧栏都会立即完成。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/monitor-dark.png">

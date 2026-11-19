@@ -64,14 +64,45 @@ function clearConnectionInputs() {
 }
 
 const compactLayout = matchMedia('(max-width: 660px)');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const pageScroll = new Map();
+let activePage = 'monitor';
+
+function stopReveals(root) {
+  for (const animation of root.getAnimations({ subtree: true })) {
+    if (animation.id === 'houyu-reveal') animation.cancel();
+  }
+}
+
+function reveal(element) {
+  if (reducedMotion.matches || !element.checkVisibility()) return;
+  stopReveals(element);
+  element.animate([{ opacity: .84, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }],
+    { id: 'houyu-reveal', duration: 150, easing: 'cubic-bezier(.2,.7,.3,1)' });
+}
+
+reducedMotion.addEventListener('change', () => {
+  if (reducedMotion.matches) stopReveals(get('workspace'));
+});
+
 function setSidebar(open) {
   const opened = compactLayout.matches && open;
+  const sidebar = get('sidebar');
+  if (opened) sidebar.dataset.disclosure = '';
+  else if (!compactLayout.matches) delete sidebar.dataset.disclosure;
   get('rail-toggle').setAttribute('aria-expanded', String(opened));
-  get('sidebar').classList.toggle('open', opened);
+  sidebar.classList.toggle('open', opened);
+  sidebar.inert = compactLayout.matches && !opened;
   get('workspace').inert = opened;
 }
 
 function showPage(page) {
+  const workspace = get('workspace');
+  const changed = page !== activePage;
+  if (changed) {
+    pageScroll.set(activePage, workspace.scrollTop);
+    stopReveals(get(`page-${activePage}`));
+  }
   setSidebar(false);
   if (page !== 'feishu') {
     clearConnectionInputs();
@@ -86,10 +117,15 @@ function showPage(page) {
     else nav.removeAttribute('aria-current');
     get(`page-${nav.dataset.page}`).hidden = !selected;
   }
-  const title = get(`page-${page}`).querySelector('h1');
+  const panel = get(`page-${page}`);
+  const title = panel.querySelector('h1');
   title.tabIndex = -1;
   title.focus({ preventScroll: true });
-  document.querySelector('.workspace').scrollTop = 0;
+  if (changed) {
+    activePage = page;
+    workspace.scrollTop = pageScroll.get(page) ?? 0;
+    reveal(panel);
+  }
 }
 
 function shortDay(value) {
@@ -200,6 +236,7 @@ function submitTarget(event) {
     try {
       await app.saveTarget(campus, target);
       error.hidden = true;
+      if (activePage === 'target' && current.options.campus === campus) reveal(get('saved-place'));
       showToast('提醒目标已保存。');
     } catch (err) { text('target-error', err.message || '目标保存失败，请重试。'); error.hidden = false; }
   });
@@ -467,6 +504,7 @@ function updateOptions(patch) {
 if (!app) {
   showToast('桌面服务未启动。请从应用程序重新打开。');
 } else {
+  setSidebar(false);
   const toggle = get('rail-toggle');
   toggle.addEventListener('click', () => setSidebar(toggle.getAttribute('aria-expanded') !== 'true'));
   document.addEventListener('keydown', event => {

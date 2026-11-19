@@ -261,6 +261,10 @@ async function run() {
     event.sender.send('courtwatch:state', { ...state, running: true });
     return { ok: true };
   });
+  ipcMain.handle('courtwatch:target', (event, { campus, target }) => {
+    event.sender.send('courtwatch:state', { ...state, options: { ...state.options, targets: { [campus]: target } } });
+    return { ok: true };
+  });
   const assets = { '/index.html': 'text/html', '/styles.css': 'text/css', '/renderer.js': 'text/javascript', '/icon.png': 'image/png' };
   session.defaultSession.protocol.handle('courtwatch', async request => {
     const item = new URL(request.url).pathname;
@@ -269,7 +273,7 @@ async function run() {
   });
   const window = new BrowserWindow({ width: 1060, height: 720, useContentSize: true, show: false, webPreferences: { ...preferences, preload: path.join(source, 'preload.cjs') } });
   await window.loadURL('courtwatch://app/index.html');
-  await window.webContents.insertCSS('* { transition: none !important; }', { cssOrigin: 'user' });
+  const staticStyles = await window.webContents.insertCSS('* { transition: none !important; }', { cssOrigin: 'user' });
   await window.webContents.executeJavaScript("Date.now = () => Date.parse('2026-11-18T14:08:00+08:00'); window.dispatchEvent(new Event('focus'))");
   const code = `new Promise((resolve, reject) => {
     const deadline = performance.now() + 3000;
@@ -287,6 +291,7 @@ async function run() {
   const js = code => window.webContents.executeJavaScript(code);
   async function capture(name, selector) {
     await paint();
+    await js("Promise.allSettled(document.getAnimations().map(effect => effect.finished)).then(() => true)");
     const rect = await js(`(() => {
       const area = document.querySelector('${selector}').getBoundingClientRect();
       const right = Math.min(innerWidth, Math.ceil(area.right) + 24);
@@ -552,9 +557,90 @@ async function run() {
       document.querySelector('#saved-note').hidden, document.querySelector('#day-band').hidden]`),
       [mode, '此校区提醒已暂停', false, mode === 'invalid']);
   }
+  await window.webContents.removeInsertedCSS(staticStyles);
+  await checkMotion(window, state, paint, js);
   window.destroy();
   process.stdout.write('Electron UI and timetable regressions passed, including delayed and overlapping pages, expiry, and clearing unreadable settings.\n');
   app.exit(0);
+}
+
+async function checkMotion(window, state, paint, js) {
+  const contents = window.webContents;
+  const clickPage = page => js(`document.querySelector('[data-page="${page}"]').click()`);
+  const settle = () => js("Promise.allSettled(document.getAnimations().map(effect => effect.finished)).then(() => true)");
+  contents.debugger.attach();
+  async function preference(value) {
+    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value }] });
+    await paint();
+    assert.equal(await js(`matchMedia('(prefers-reduced-motion: ${value})').matches`), true);
+  }
+  try {
+    await preference('no-preference');
+    window.setContentSize(740, 340);
+    contents.send('courtwatch:state', state);
+    await js("Date.now = () => Date.parse('2026-11-18T14:08:00+08:00'); window.dispatchEvent(new Event('focus'))");
+    await clickPage('monitor');
+    await paint();
+    const scroll = await js("const work = document.querySelector('#workspace'); work.scrollTop = 80; work.scrollTop");
+    assert.ok(scroll > 0, 'the test actually scrolls the agenda');
+    const rapid = await js(`(() => {
+      const nav = page => document.querySelector('[data-page="' + page + '"]').click();
+      nav('target'); nav('feishu');
+      document.querySelector('#feishu-webhook').value = 'unsaved-fixture';
+      nav('monitor');
+      const effect = document.querySelector('#page-monitor').getAnimations().find(a => a.id === 'houyu-reveal');
+      nav('monitor');
+      return [effect?.effect.getTiming().duration, document.querySelector('#page-monitor').getAnimations().includes(effect),
+        document.activeElement.id, work.scrollTop, document.querySelector('#feishu-webhook').value,
+        document.querySelectorAll('.workspace > section:not([hidden])').length];
+    })()`);
+    assert.deepEqual(rapid, [150, true, 'selected-campus', scroll, '', 1],
+      'rapid switches restore the agenda, immediately clear the draft, and keep the same transition on reselection');
+    await settle();
+    contents.send('courtwatch:state', { ...state, checking: true });
+    await paint();
+    assert.deepEqual(await js("[document.querySelector('#workspace').getAnimations({subtree:true}).some(a => a.id === 'houyu-reveal'), work.scrollTop]"),
+      [false, scroll], 'background scans do not restart motion or move the scroll position');
+
+    await clickPage('target');
+    const saveAndReadDuration = () => js(`new Promise((resolve, reject) => {
+      const toast = document.querySelector('#toast');
+      const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Target confirmation timed out')); }, 5000);
+      const observer = new MutationObserver(() => {
+        if (toast.hidden || toast.textContent !== '提醒目标已保存。') return;
+        const effect = document.querySelector('#saved-place').getAnimations().find(a => a.id === 'houyu-reveal');
+        clearTimeout(timer); observer.disconnect(); resolve(effect?.effect.getTiming().duration ?? 0);
+      });
+      observer.observe(toast, { attributes: true, childList: true, subtree: true });
+      document.querySelector('#target-form').requestSubmit();
+    })`);
+    assert.equal(await saveAndReadDuration(), 150, 'only an accepted save highlights the displayed time range');
+
+    contents.setZoomFactor(2);
+    await paint();
+    const toggleAndCheckRail = () => js(`(() => {
+      document.querySelector('#rail-toggle').click();
+      const rail = document.querySelector('#sidebar');
+      return [rail.inert, work.inert, getComputedStyle(rail).pointerEvents, rail.getAnimations().some(a => a.transitionProperty === 'opacity')];
+    })()`);
+    assert.deepEqual(await toggleAndCheckRail(), [false, true, 'auto', true]);
+    await settle();
+    assert.deepEqual(await toggleAndCheckRail(), [true, false, 'none', true], 'the fading sidebar gives up focus and pointer handling immediately');
+    await js("document.querySelector('#rail-toggle').click(); document.querySelector('#rail-toggle').click()");
+    await settle();
+    assert.equal(await js("!document.querySelector('#sidebar').checkVisibility() && !work.inert"), true);
+
+    await preference('reduce');
+    assert.deepEqual(await js(`(() => {
+      document.querySelector('#rail-toggle').click();
+      const any = document.querySelector('#sidebar').getAnimations().length;
+      document.querySelector('[data-page=monitor]').click();
+      return [any, document.querySelector('#sidebar').getAnimations().length, work.getAnimations({subtree:true}).length,
+        document.activeElement.id, document.querySelector('#sidebar').checkVisibility(), work.inert];
+    })()`), [0, 0, 0, 'selected-campus', false, false], 'reduced motion makes opening, navigation and dismissal immediate');
+    await js("document.querySelector('#rail-toggle').click(); document.querySelector('[data-page=target]').click()");
+    assert.equal(await saveAndReadDuration(), 0, 'reduced motion still confirms the saved target without animating it');
+  } finally { contents.debugger.detach(); }
 }
 
 app.whenReady().then(run).catch(error => {
