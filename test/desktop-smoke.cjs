@@ -129,10 +129,12 @@ async function run() {
   const page = new BrowserWindow({ show: false, webPreferences: preferences });
   const clock = hour => `${String(hour).padStart(2, '0')}:00`;
   async function readFixture(spec, at = Date.parse('2026-11-18T14:08:00+08:00')) {
+    const fixedRows = spec.fixedCourts ? ['场地', ...spec.courts.map(id => `${id}号`), '场地'] : [];
+    const fixedColumn = fixedRows.length ? `<table>${fixedRows.map(label => `<tr><td>${label}</td></tr>`).join('')}</table>` : '';
     const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved,.reservation{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
       <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div><div class="proContent">${spec.notice ?? ''}</div>
       <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div ${spec.disableThirdDay ? 'aria-disabled="true"' : ''}><span>11月20日</span></div></div>
-      <div class="spaceTable">${spec.fixedCourts ? '<table><tr><td>场地</td></tr>' + spec.courts.map(id => '<tr><td>' + id + '号</td></tr>').join('') + '<tr><td>场地</td></tr></table>' : ''}<table class="schedule-grid"></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
+      <div class="spaceTable">${fixedColumn}<table class="schedule-grid"></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
     await page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHtml)}`);
     assert.equal(await page.webContents.executeJavaScriptInIsolatedWorld(1201, [{ code: `(${signedInOnBookingSite.toString()})()` }]), true);
     const readOptions = { bookableLabels: [...calendarDates(at).keys()], nowClock: beijingClock(at) };
