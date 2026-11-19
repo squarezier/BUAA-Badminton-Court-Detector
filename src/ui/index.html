@@ -45,9 +45,16 @@
 
         <div class="monitor-grid">
           <section class="schedule" aria-labelledby="schedule-title-label">
-            <div class="section-head agenda-head">
-              <div class="agenda-title"><h2 id="schedule-title-label" tabindex="-1">当前空场</h2><span id="scope" class="subtle" title="官网已核验的日期范围"></span></div>
-              <div id="date-filter" class="date-filter" role="group" aria-label="按日期查看空场" hidden></div>
+            <div class="agenda-top">
+              <div class="section-head agenda-head">
+                <div class="agenda-title"><h2 id="schedule-title-label" tabindex="-1">当前空场</h2><span id="scope" class="subtle" title="官网已核验的日期范围"></span></div>
+                <div id="date-filter" class="date-filter" role="group" aria-label="按日期查看空场" hidden></div>
+              </div>
+              <section id="target-summary" class="target-summary" data-state="all" aria-label="本校区提醒目标">
+                <div class="target-when"><span class="target-label"><i class="nav-icon target-icon" aria-hidden="true"></i>提醒目标</span><span id="shortcut-range">全部退订</span><strong id="shortcut-place"></strong></div>
+                <span id="shortcut-scope"></span>
+                <button class="quiet" type="button" id="open-target"><span id="target-link-label">设置目标</span> <span aria-hidden="true">›</span></button>
+              </section>
             </div>
             <div id="read-error" class="warning" role="status" hidden></div>
             <div id="empty" class="empty"><strong id="empty-title">登录北航后可查看场地</strong><p id="empty-note" hidden></p></div>
@@ -75,10 +82,6 @@
                 </div>
               </form>
             </section>
-            <section class="shortcut" aria-labelledby="shortcut-title">
-              <div class="section-head"><h2 id="shortcut-title">提醒目标</h2><button class="quiet" type="button" id="open-target"><span id="target-link-label">设置</span> <span aria-hidden="true">›</span></button></div>
-              <strong id="shortcut-range">全部退订</strong><p id="shortcut-place"></p>
-            </section>
           </aside>
         </div>
       </section>
@@ -99,9 +102,16 @@
           <aside class="saved-strip" aria-labelledby="saved-heading">
             <h2 id="saved-heading">当前提醒范围</h2>
             <strong id="saved-range"></strong><span id="saved-place"></span>
-            <div class="day-band" aria-hidden="true">
-              <svg viewBox="0 0 1440 12" preserveAspectRatio="none" focusable="false"><rect class="band-base" x="0" y="3" width="1440" height="6"></rect><rect id="band-range" x="0" y="2" width="1440" height="8"></rect><path d="M360 0v12 M720 0v12 M1080 0v12" class="band-ticks"></path></svg>
-              <div><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+            <div class="day-band" id="day-band">
+              <p id="band-duration"></p>
+              <svg viewBox="0 0 1440 24" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                <defs><pattern id="hours" width="60" height="24" patternUnits="userSpaceOnUse"><path d="M0 12v5" class="band-tick"></path></pattern></defs>
+                <rect class="band-base" x="0" y="10" width="1440" height="5"></rect><rect x="0" y="0" width="1440" height="24" fill="url(#hours)"></rect>
+                <path d="M0 9v12 M360 9v12 M720 9v12 M1080 9v12 M1440 9v12" class="band-tick"></path>
+                <rect id="band-range" x="0" y="7" width="1440" height="9"></rect>
+                <path id="band-ends" d="M0 3v17 M1440 3v17"></path>
+              </svg>
+              <div aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
             </div>
             <p id="target-coverage"></p>
             <p class="warning" id="saved-note" hidden></p>

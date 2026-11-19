@@ -93,6 +93,7 @@ function renderTarget(options, venues, now) {
   const version = JSON.stringify([options.campus, target === undefined ? 'all' : target]);
   const endsAt = target ? Date.parse(`${target.date}T${target.end}:00+08:00`) : 0;
   const expired = Boolean(target && endsAt <= now);
+  const mode = target ? (expired ? 'expired' : 'active') : (target === null ? 'invalid' : 'all');
   const campus = campusNames[options.campus];
   const coverage = `${venues.map(venueName).join('、')} · 全部场号`;
   text('target-coverage', coverage);
@@ -112,6 +113,8 @@ function renderTarget(options, venues, now) {
     note = '请重新保存或移除目标。';
   }
   text('target-campus', campus);
+  get('target-summary').dataset.state = mode;
+  get('saved-heading').parentElement.dataset.state = mode;
   text('saved-range', range);
   text('shortcut-range', range);
   text('saved-place', place);
@@ -121,10 +124,17 @@ function renderTarget(options, venues, now) {
   const end = target ? minute(target.end) : target === null ? 0 : 1440;
   get('band-range').setAttribute('x', String(start));
   get('band-range').setAttribute('width', String(end - start));
-  text('shortcut-place', place);
+  get('band-ends').setAttribute('d', `M${start} 3v17 M${end} 3v17`);
+  get('day-band').hidden = target === null;
+  const duration = end - start;
+  const parts = [Math.floor(duration / 60) ? `${Math.floor(duration / 60)} 小时` : '', duration % 60 ? `${duration % 60} 分钟` : ''].filter(Boolean);
+  text('band-duration', target ? `时长 ${parts.join(' ')}` : '全天');
+  text('shortcut-place', target ? place : '');
+  text('shortcut-scope', mode === 'active' ? `${campus} · 全部场号` : mode === 'all' ? '' : '此校区提醒已暂停');
   text('saved-note', note);
   get('saved-note').hidden = !note;
-  text('target-link-label', target === undefined ? '设置' : '编辑');
+  text('target-link-label', target === undefined ? '设置目标' : '编辑');
+  get('open-target').setAttribute('aria-label', target === undefined ? '设置提醒目标' : '编辑提醒目标');
   get('clear-target').hidden = target === undefined;
   get('target-date').min = today;
   if (version !== editorVersion) targetDirty = false;
@@ -249,7 +259,6 @@ function renderTable(rows, venues, now) {
   body.replaceChildren();
   let restoreFocus;
   let dateCell;
-  let previousInTarget = false;
   for (const slot of rows) {
     const row = body.insertRow();
     if (dateCell?.dataset.date !== slot.date) {
@@ -278,11 +287,10 @@ function renderTable(rows, venues, now) {
     if (slot.inTarget) {
       row.classList.add('in-target');
       const label = document.createElement('small');
-      label.className = previousInTarget ? 'sr-only' : 'target-caption';
-      label.textContent = '目标时段';
+      label.className = 'target-caption';
+      label.textContent = '目标内';
       timeCell.append(label);
     }
-    previousInTarget = Boolean(slot.inTarget);
     const venue = venues.find(item => item.id === slot.venue);
     const link = document.createElement('button');
     link.type = 'button';

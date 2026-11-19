@@ -305,7 +305,18 @@ async function run() {
   assert.equal(await toolbarFits(), true, 'the campus, count, status, schedule and primary control fit the masthead');
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell')].map(cell => cell.rowSpan)"), [1, 1, 3]);
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell small')].map(el => el.textContent)"), ['今天 · 周三', '明天 · 周四', '周五']);
-  assert.deepEqual(await js("[document.querySelectorAll('.in-target').length, document.querySelectorAll('.target-caption').length]"), [3, 1]);
+  assert.deepEqual(await js("[...document.querySelectorAll('.in-target .target-caption')].map(el => el.textContent)"), ['目标内', '目标内', '目标内']);
+  const targetStripFits = () => js(`(() => {
+    const strip = document.querySelector('#target-summary').getBoundingClientRect();
+    return strip.bottom <= document.querySelector('.table-wrap').getBoundingClientRect().top &&
+      ['.target-label', '#shortcut-range', '#shortcut-place', '#shortcut-scope', '#open-target'].every(selector => {
+        const box = document.querySelector(selector).getBoundingClientRect();
+        return box.width > 0 && box.top >= strip.top && box.bottom <= strip.bottom && box.left >= strip.left && box.right <= strip.right;
+      });
+  })()`);
+  assert.equal(await targetStripFits(), true);
+  assert.deepEqual(await js("[document.querySelector('#target-summary').dataset.state, document.querySelector('#shortcut-range').textContent, document.querySelector('#shortcut-scope').textContent]"),
+    ['active', '11月20日 周五', '学院路校区 · 全部场号']);
   assert.deepEqual(await js("[...document.querySelectorAll('#booking-links button')].map(el => el.textContent)"), ['主馆预约 ↗', '训练馆预约 ↗']);
   const readable = () => js(`(() => {
     const luminance = color => {
@@ -345,12 +356,12 @@ async function run() {
     rows: state.rows.filter(row => row.date !== '2026-11-20' || row.venue !== '39'),
   });
   await paint();
-  assert.deepEqual(await js("[document.querySelectorAll('#rows tr').length, document.querySelector('#read-error').textContent, document.querySelector('#read-error').hidden]"),
-    [1, '训练馆 · 11月20日的时段表待核验', false], 'one verified venue remains visible beside the other venue’s read warning');
+  assert.deepEqual(await js("[document.querySelectorAll('#rows tr').length, document.querySelector('#read-error').textContent, document.querySelector('#read-error').hidden, document.querySelector('.target-caption').textContent]"),
+    [1, '训练馆 · 11月20日的时段表待核验', false, '目标内'], 'a single verified matching slot keeps its label beside the other venue’s read warning');
   window.webContents.send('courtwatch:state', { ...state, rows: state.rows.slice(0, 2) });
   await paint();
-  assert.deepEqual(await js("[document.querySelector('#empty').hidden, document.querySelector('#empty-title').textContent, document.querySelector('#count').textContent]"),
-    [false, '11月20日 周五没有可约场次', '5'], 'a sold-out date stays selected and other dates remain available');
+  assert.deepEqual(await js("[document.querySelector('#empty').hidden, document.querySelector('#empty-title').textContent, document.querySelector('#count').textContent, document.querySelector('#target-summary').dataset.state, document.querySelectorAll('.target-caption').length]"),
+    [false, '11月20日 周五没有可约场次', '5', 'active', 0], 'a sold-out date keeps its saved scope without marking other dates as matches');
   await js("document.querySelector('#date-filter [data-date=\"\"]').click()");
   assert.equal(await js("document.querySelectorAll('#rows tr').length"), 2);
   await js("document.querySelector('#date-filter [data-date=\"2026-11-18\"]').click()");
@@ -371,6 +382,8 @@ async function run() {
   await paint();
   assert.deepEqual(await js("[...document.querySelectorAll('.court-number')].map(mark => mark.textContent)"), ['1', 'B1', 'B2', 'B6']);
   assert.equal(await js("document.querySelector('.court-numbers').getAttribute('aria-label')"), '1、B1、B2、B6号');
+  assert.deepEqual(await js("[document.querySelector('#target-summary').dataset.state, document.querySelector('.target-label').checkVisibility(), document.querySelector('#open-target').getAttribute('aria-label')]"),
+    ['all', false, '设置提醒目标'], 'a campus with no saved target gets a compact settings link');
   assert.deepEqual(await js(`[document.querySelector('#date-filter').hidden,
     document.querySelector('.schedule').getBoundingClientRect().bottom - document.querySelector('#booking-links').getBoundingClientRect().bottom <= 18]`),
     [true, true], 'one available date omits date controls and its links sit directly above the settings');
@@ -404,7 +417,10 @@ async function run() {
   assert.equal(await js('document.activeElement.id'), 'schedule-title-label', 'a vanished row returns keyboard focus to the schedule');
   window.webContents.send('courtwatch:state', state);
   await paint();
-  await window.webContents.executeJavaScript("document.querySelector('#open-target').click()");
+  await js("document.querySelector('#open-target').focus()");
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  window.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
   await paint();
   assert.deepEqual(await window.webContents.executeJavaScript(`[
     document.querySelector('#page-target').hidden, document.querySelector('#target-date').value,
@@ -414,6 +430,8 @@ async function run() {
   assert.deepEqual(await js(`[document.querySelector('#band-range').getAttribute('x'), document.querySelector('#band-range').getAttribute('width'),
     document.querySelector('.saved-strip').getBoundingClientRect().left >= document.querySelector('#target-form').getBoundingClientRect().right]`),
     ['1080', '120', true], 'the saved range spans two hours and sits beside its editor');
+  assert.deepEqual(await js("[document.querySelector('#band-ends').getAttribute('d'), document.querySelector('#band-duration').textContent, document.activeElement.id]"),
+    ['M1080 3v17 M1200 3v17', '时长 2 小时', 'target-title']);
   await capture('target.png', '#page-target .form-sheet');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
@@ -447,6 +465,7 @@ async function run() {
     'both parts of the interval control remain legible at minimum width');
   window.webContents.setZoomFactor(2);
   await paint();
+  assert.equal(await targetStripFits(), true, 'the target date, hours, campus scope and edit link remain readable at double zoom');
   assert.equal(await js(`document.documentElement.scrollWidth <= innerWidth &&
     [...document.querySelectorAll('.navigation button, #account-action')].every(el => {
       const box = el.getBoundingClientRect();
@@ -512,6 +531,14 @@ async function run() {
   await js("const dateInput = document.querySelector('#target-date'); dateInput.value = '2026-12-11'; dateInput.dispatchEvent(new Event('input', { bubbles: true }))");
   await crossMidnight('2026-11-19');
   assert.equal(await js("document.querySelector('#target-date').value"), '2026-12-11', 'untouched defaults advance while an explicit draft survives midnight');
+  for (const [targetValue, mode] of [[state.options.targets.xueyuanlu, 'expired'], [null, 'invalid']]) {
+    window.webContents.send('courtwatch:state', { ...state, rows: [], options: { ...state.options, targets: { xueyuanlu: targetValue } } });
+    await js("Date.now = () => Date.parse('2026-11-21T13:00:00+08:00'); window.dispatchEvent(new Event('focus'))");
+    await paint();
+    assert.deepEqual(await js(`[document.querySelector('#target-summary').dataset.state, document.querySelector('#shortcut-scope').textContent,
+      document.querySelector('#saved-note').hidden, document.querySelector('#day-band').hidden]`),
+      [mode, '此校区提醒已暂停', false, mode === 'invalid']);
+  }
   window.destroy();
   process.stdout.write('Electron UI and timetable regressions passed, including delayed and overlapping pages, expiry, and clearing unreadable settings.\n');
   app.exit(0);
