@@ -174,22 +174,31 @@ class CourtMonitor {
   applySnapshot(id, sample, readStarted) {
     const now = this.now();
     const upcoming = sample.slots.filter(slot => startsAt(slot) > now);
-    const prior = this.previousReservations.get(id);
+    const prior = this.previousReservations.get(id) ?? new Map();
+    const unread = new Set(sample.unreadDates);
     this.snapshots.set(id, { at: now, dates: sample.dates, unreadDates: sample.unreadDates, slots: upcoming, error: '' });
-    if (prior && this.delivery.configured) {
+    if (this.delivery.configured && (prior.size || this.pending.size)) {
       const available = new Map(upcoming.map(slot => [slotKey(slot), slot]));
       for (const [key, item] of this.pending) {
-        if (item.venue === id && !available.has(key)) this.pending.delete(key);
+        if (item.venue === id && !unread.has(item.date) && !available.has(key)) this.pending.delete(key);
       }
+      const lead = VENUES[id].paidRefundLeadMs;
       for (const [key, slot] of available) {
         if (!matchesTarget(slot, this.target)) continue;
-        const lead = VENUES[id].paidRefundLeadMs;
-        // A refund may have happened between observations, even if green first appears after the deadline.
-        const couldRefund = slot.price === 0 || lead === undefined || prior.started <= startsAt(slot) - lead;
-        if (this.pending.has(key) || (prior.keys.has(key) && couldRefund)) this.pending.set(key, slot);
+        const sold = prior.get(slot.date);
+        const reopening = sold?.keys.has(key) && (slot.price === 0 || lead === undefined || sold.started <= startsAt(slot) - lead);
+        if (this.pending.has(key) || reopening) this.pending.set(key, slot);
       }
     }
-    this.previousReservations.set(id, { started: sample.started ?? readStarted, keys: new Set((sample.reserved ?? []).map(slotKey)) });
+    // Keep the last reliable observation only for dates explicitly marked unreadable.
+    // A withdrawn date must start from a fresh baseline if the site publishes it again.
+    for (const date of prior.keys()) if (!unread.has(date)) prior.delete(date);
+    const started = sample.started ?? readStarted;
+    for (const slot of sample.reserved ?? []) {
+      if (!prior.has(slot.date)) prior.set(slot.date, { started, keys: new Set() });
+      prior.get(slot.date).keys.add(slotKey(slot));
+    }
+    this.previousReservations.set(id, prior);
   }
 
   async notifyPending(failedVenues, signal) {
@@ -198,7 +207,7 @@ class CourtMonitor {
     const candidates = [];
     for (const [key, slot] of pending) {
       if (startsAt(slot) <= now || !matchesTarget(slot, this.target)) pending.delete(key);
-      else if (!failedVenues.has(slot.venue)) candidates.push(slot);
+      else if (!failedVenues.has(slot.venue) && this.snapshots.get(slot.venue)?.dates.includes(slot.date)) candidates.push(slot);
     }
     if (!candidates.length || signal.aborted || !this.delivery.configured ||
         this.delivery.status === 'blocked' || now < this.pushNotBefore) return;

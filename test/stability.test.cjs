@@ -131,6 +131,111 @@ test('a confirmed retry survives the refund deadline and drops a court exactly w
   assert.doesNotMatch(messages[1].markdown, /1号/);
 });
 
+test('partial dates keep their own sold observation across the refund deadline while withdrawn dates reset', async t => {
+  const today = '2026-11-18';
+  const tomorrow = '2026-11-19';
+  const later = '2026-11-20';
+  const courts = [slot(1), { ...slot(2), date: tomorrow }, { ...slot(3), date: later }];
+  let now = refundDeadline;
+  let sample = { dates: [today, tomorrow, later], reserved: courts, slots: [] };
+  const messages = [];
+  const monitor = setup(t, {
+    now: () => now,
+    async checkVenue() { return sample; },
+    async dispatch(message) { messages.push(message); return accepted; },
+  });
+  await monitor.check();
+  now += 60000;
+  sample = { dates: [tomorrow], unreadDates: [today], slots: [courts[1]] };
+  await monitor.check();
+  await monitor.check();
+  assert.equal(monitor.state().slotCount, 1);
+  assert.deepEqual(monitor.state().venues[0].unreadDates, [today]);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].markdown, /2号/);
+  sample = { dates: [today, tomorrow, later], slots: courts };
+  await monitor.check();
+  await monitor.check();
+  assert.equal(monitor.state().slotCount, 3);
+  assert.equal(messages.length, 2);
+  assert.match(messages[1].markdown, /1号/);
+  assert.doesNotMatch(messages[1].markdown, /2号|3号/);
+});
+
+test('a pending retry waits for fresh green evidence on its specific date', async t => {
+  const date = '2026-11-18';
+  const tomorrow = '2026-11-19';
+  const courts = [slot(4), slot(5)];
+  let now = baselineTime;
+  let sample = { dates: [date, tomorrow], reserved: courts, slots: [] };
+  const messages = [];
+  const monitor = setup(t, {
+    now: () => now,
+    async checkVenue() { return sample; },
+    async dispatch(message) {
+      messages.push(message);
+      return messages.length === 1 ? { kind: 'retry', text: 'limited', retryAfterMs: 60000 } : accepted;
+    },
+  });
+  await monitor.check();
+  sample = { dates: [date, tomorrow], slots: courts };
+  await monitor.check();
+  now += 60000;
+  sample = { dates: [tomorrow], unreadDates: [date], slots: [] };
+  await monitor.check();
+  await monitor.check();
+  assert.equal(messages.length, 1);
+  assert.equal(monitor.state().slotCount, 0);
+  sample = { dates: [date, tomorrow], slots: [courts[0]], reserved: [courts[1]] };
+  await monitor.check();
+  await monitor.check();
+  assert.equal(messages.length, 2);
+  assert.match(messages[1].markdown, /4号/);
+  assert.doesNotMatch(messages[1].markdown, /5号/);
+  assert.equal(monitor.pending.size, 0);
+});
+
+test('suspending before the push transport starts preserves the reopening for one fresh attempt', async t => {
+  const connection = feishuConnection({ webhook: 'https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-test-hook' });
+  const waitingForVault = deferred();
+  const unlock = deferred();
+  let sample = { ...stamped(), reserved: [slot(2)] };
+  let attempts = 0;
+  let requests = 0;
+  const monitor = setup(t, {
+    async checkVenue() { return sample; },
+    async dispatch(message, signal) {
+      if (++attempts === 1) { waitingForVault.resolve(); await unlock.promise; }
+      return sendPush(connection, message, signal, async () => { requests++; return Response.json({ code: 0 }); });
+    },
+  });
+  await monitor.check();
+  sample = stamped(slot(2));
+  const poll = monitor.check();
+  await waitingForVault.promise;
+  monitor.setSuspended(true);
+  unlock.resolve();
+  await poll;
+  assert.equal(requests, 0);
+  monitor.setSuspended(false);
+  await monitor.check();
+  await monitor.check();
+  assert.equal(requests, 1);
+  assert.equal(attempts, 2);
+});
+
+test('a complete Feishu result remains authoritative when suspension overlaps reading its response', async () => {
+  const connection = feishuConnection({ webhook: 'https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-test-hook' });
+  for (const [code, kind] of [[11232, 'retry'], [0, 'accepted']]) {
+    const controller = new AbortController();
+    const result = await sendPush(connection, { feishuCard: {} }, controller.signal, async () => {
+      controller.abort();
+      return Response.json({ code });
+    });
+    assert.equal(result.kind, kind);
+  }
+});
+
 test('a rapid pause and restart waits for the aborted poll to settle', async t => {
   const first = deferred();
   let calls = 0;

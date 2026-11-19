@@ -13,6 +13,7 @@ const campusNames = { shahe: '沙河校区', xueyuanlu: '学院路校区' };
 let current;
 let busy = false;
 let toastTimer;
+let connectionDraftTimer;
 let renderedRows = '';
 let expiryTimer;
 let intervalDirty = false;
@@ -22,6 +23,8 @@ let editorDay;
 let targetDirty = false;
 let replacingConnection = false;
 let bookingVenues = '';
+let viewedDate = '';
+let renderedDates = '';
 
 const venueNames = { '38': '主馆', '39': '训练馆', '57': '综合馆' };
 const venueName = venue => venueNames[venue.id] ?? venue.label;
@@ -55,6 +58,7 @@ function runPushAction(action) {
 }
 
 function clearConnectionInputs() {
+  clearTimeout(connectionDraftTimer);
   get('feishu-webhook').value = '';
   get('feishu-secret').value = '';
 }
@@ -204,6 +208,36 @@ function renderBookingLinks(venues) {
   }));
 }
 
+function renderDateFilter(rows, verifiedDates, now) {
+  const dates = [...new Set(rows.map(row => row.date))];
+  if (!verifiedDates.includes(viewedDate) && !dates.includes(viewedDate)) viewedDate = '';
+  if (viewedDate && !dates.includes(viewedDate)) dates.push(viewedDate);
+  dates.sort();
+  const today = isoDay.format(now);
+  const key = JSON.stringify([dates, today]);
+  const group = get('date-filter');
+  const focusDate = group.contains(document.activeElement) ? document.activeElement.dataset.date : null;
+  group.hidden = dates.length < 2 && !viewedDate;
+  if (group.hidden && focusDate != null) get('schedule-title-label').focus({ preventScroll: true });
+  if (key !== renderedDates) {
+    renderedDates = key;
+    const tomorrow = isoDay.format(now + 86400000);
+    group.replaceChildren(...['', ...dates].map(date => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.date = date;
+      button.textContent = !date ? '全部' : date === today ? '今天' : date === tomorrow ? '明天' : date.slice(5).replace('-', '/');
+      button.setAttribute('aria-label', date ? shortDay(date) : '全部日期');
+      return button;
+    }));
+    if (!group.hidden && focusDate != null) {
+      const next = [...group.children].find(button => button.dataset.date === focusDate) ?? group.firstElementChild;
+      next.focus({ preventScroll: true });
+    }
+  }
+  for (const button of group.children) button.setAttribute('aria-pressed', String(button.dataset.date === viewedDate));
+}
+
 function renderTable(rows, venues, now) {
   const today = isoDay.format(now);
   const tomorrow = isoDay.format(now + 86400000);
@@ -236,8 +270,11 @@ function renderTable(rows, venues, now) {
     } else {
       dateCell.rowSpan++;
     }
-    const timeCell = appendCell(row, `${slot.start}–${slot.end}`);
+    const timeCell = row.insertCell();
     timeCell.className = 'slot-time';
+    const starts = document.createElement('strong');
+    starts.textContent = slot.start;
+    timeCell.append(starts, `–${slot.end}`);
     if (slot.inTarget) {
       row.classList.add('in-target');
       const label = document.createElement('small');
@@ -342,16 +379,18 @@ function render() {
   text('scope', range);
   get('read-error').hidden = !errors.length;
   text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error || venue.unreadDates.map(showDate).join('、') + '的时段表待核验'}`).join('\n'));
-  renderTable(rows, venues, now);
-  get('empty').hidden = rows.length > 0;
-  get('table-wrap').hidden = rows.length === 0;
-  if (!rows.length) {
+  renderDateFilter(rows, dates, now);
+  const visibleRows = viewedDate ? rows.filter(row => row.date === viewedDate) : rows;
+  renderTable(visibleRows, venues, now);
+  get('empty').hidden = visibleRows.length > 0;
+  get('table-wrap').hidden = visibleRows.length === 0;
+  if (!visibleRows.length) {
     let title = '登录北航后可查看场地';
     let note = '';
     if (signedIn) title = '开始监控后查看空场';
     if (checking) title = '正在读取场地…';
     else if (errors.length) { title = '部分场地未能核验'; note = running ? '将在下轮检查时重试。' : ''; }
-    else if (anyResult) title = running ? '当前没有绿色可约场次' : '上次检查没有绿色可约场次';
+    else if (anyResult) title = viewedDate ? `${shortDay(viewedDate)}没有可约场次` : running ? '当前没有绿色可约场次' : '上次检查没有绿色可约场次';
     text('empty-title', title);
     get('empty-note').hidden = !note;
     text('empty-note', note);
@@ -392,6 +431,7 @@ function render() {
 }
 
 function receive(state) {
+  if (state.options.campus !== current?.options.campus || state.auth !== 'signed-in') viewedDate = '';
   current = state;
   render();
 }
@@ -414,6 +454,12 @@ if (!app) {
   get('account-action').addEventListener('click', () => act(() => current?.auth === 'signed-in' ? app.logOut() : app.login()));
   get('monitor-action').addEventListener('click', () => act(() => current?.running ? app.pause() : app.start()));
   get('open-target').addEventListener('click', () => showPage('target'));
+  get('date-filter').addEventListener('click', event => {
+    const button = event.target.closest('button[data-date]');
+    if (!button) return;
+    viewedDate = button.dataset.date;
+    render();
+  });
   get('target-form').addEventListener('input', () => {
     targetDirty = true;
     if (!get('target-error').hidden) validateTargetRange();
@@ -462,6 +508,15 @@ if (!app) {
     pushError = '';
     render();
     get('replace-connection').focus();
+  });
+  get('push-form').addEventListener('input', () => {
+    clearTimeout(connectionDraftTimer);
+    if (get('feishu-webhook').value || get('feishu-secret').value) {
+      connectionDraftTimer = setTimeout(() => {
+        clearConnectionInputs();
+        showToast('未提交的飞书连接已清除，请重新粘贴。');
+      }, 5 * 60 * 1000);
+    }
   });
   get('push-form').addEventListener('submit', event => {
     event.preventDefault();

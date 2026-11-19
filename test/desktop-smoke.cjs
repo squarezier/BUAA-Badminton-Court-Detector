@@ -128,6 +128,15 @@ async function run() {
   const preferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false };
   const page = new BrowserWindow({ show: false, webPreferences: preferences });
   const clock = hour => `${String(hour).padStart(2, '0')}:00`;
+  const loginCheck = [{ code: `(${signedInOnBookingSite.toString()})()` }];
+  for (const [markup, signedIn] of [
+    ['<div>如何退出</div><button hidden>退出</button>', false],
+    ['<div><span style="opacity:0">退出</span></div><a>登录</a>', false],
+    ['<button><i hidden>菜单</i><span>退</span>出</button>', true],
+  ]) {
+    await page.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(markup));
+    assert.equal(await page.webContents.executeJavaScriptInIsolatedWorld(1201, loginCheck), signedIn);
+  }
   async function readFixture(spec, at = Date.parse('2026-11-18T14:08:00+08:00')) {
     const fixedRows = spec.fixedCourts ? ['场地', ...spec.courts.map(id => `${id}号`), '场地'] : [];
     const fixedColumn = fixedRows.length ? `<table>${fixedRows.map(label => `<tr><td>${label}</td></tr>`).join('')}</table>` : '';
@@ -306,7 +315,7 @@ async function run() {
       });
       return .2126 * r + .7152 * g + .0722 * b;
     };
-    return ['.button.primary', '.nav.current', '.court-number', '[data-venue="38"]', '[data-venue="39"]'].every(selector => {
+    return ['.button.primary', '.nav.current', '.court-number', '.date-cell', '.date-filter [aria-pressed=true]', '[data-venue="38"]', '[data-venue="39"]'].every(selector => {
       const el = document.querySelector(selector);
       const style = getComputedStyle(el);
       const a = luminance(style.color), b = luminance(style.backgroundColor);
@@ -316,17 +325,45 @@ async function run() {
   assert.equal(await readable(), true, 'action, navigation, venue names and available court numbers maintain readable contrast');
   const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
   assert.equal(logoWidth, 512);
-  assert.equal(await window.webContents.executeJavaScript(`
-    document.querySelector('.inspector').getBoundingClientRect().left >= document.querySelector('.schedule').getBoundingClientRect().right
-  `), true, 'Monitoring controls sit beside the results at the default width');
+  const toolsBelowResults = () => js("document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom - 1");
+  assert.equal(await toolsBelowResults(), true);
+  assert.ok(await js("document.querySelector('table').getBoundingClientRect().width >= innerWidth * .84"),
+    'the court agenda has at least 84% of the desktop width');
+  assert.ok(await js("parseFloat(getComputedStyle(document.querySelector('.court-number')).fontSize) >= 15"));
   assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('input[name=campus]:disabled')).opacity"), '0',
     'a disabled native radio does not cover the selected campus label');
   await paint();
   await capture('monitor.png', '.monitor-grid');
+  assert.deepEqual(await js("[...document.querySelectorAll('#date-filter button')].map(el => el.textContent)"), ['全部', '今天', '明天', '11/20']);
+  await js("document.querySelector('#date-filter [data-date=\"2026-11-20\"]').click()");
+  assert.deepEqual(await js(`[document.querySelectorAll('#rows tr').length, document.querySelector('.date-cell').dataset.date,
+    document.querySelector('#date-filter [aria-pressed=true]').dataset.date, document.querySelector('#count').textContent,
+    document.querySelector('#shortcut-place').textContent]`), [3, '2026-11-20', '2026-11-20', '9', '18:00–20:00'],
+  'browsing one day preserves the campus-wide count and saved notification target');
+  window.webContents.send('courtwatch:state', { ...state,
+    venues: [state.venues[0], { ...state.venues[1], unreadDates: ['2026-11-20'] }],
+    rows: state.rows.filter(row => row.date !== '2026-11-20' || row.venue !== '39'),
+  });
+  await paint();
+  assert.deepEqual(await js("[document.querySelectorAll('#rows tr').length, document.querySelector('#read-error').textContent, document.querySelector('#read-error').hidden]"),
+    [1, '训练馆 · 11月20日的时段表待核验', false], 'one verified venue remains visible beside the other venue’s read warning');
+  window.webContents.send('courtwatch:state', { ...state, rows: state.rows.slice(0, 2) });
+  await paint();
+  assert.deepEqual(await js("[document.querySelector('#empty').hidden, document.querySelector('#empty-title').textContent, document.querySelector('#count').textContent]"),
+    [false, '11月20日 周五没有可约场次', '5'], 'a sold-out date stays selected and other dates remain available');
+  await js("document.querySelector('#date-filter [data-date=\"\"]').click()");
+  assert.equal(await js("document.querySelectorAll('#rows tr').length"), 2);
+  await js("document.querySelector('#date-filter [data-date=\"2026-11-18\"]').click()");
+  window.webContents.send('courtwatch:state', { ...state, rows: state.rows.slice(0, 1) });
+  await paint();
+  await js("const allDates = document.querySelector('#date-filter [data-date=\"\"]'); allDates.focus(); allDates.click()");
+  assert.equal(await js("document.querySelector('#date-filter').hidden && document.activeElement.id === 'schedule-title-label'"), true,
+    'keyboard focus returns to the agenda when the final date control disappears');
   window.webContents.send('courtwatch:state', { ...state, options: { ...state.options, interval: 1 / 60 } });
   await paint();
   assert.deepEqual(await js("[document.querySelector('#interval').value, document.querySelector('#interval-unit').value, document.querySelector('#next').textContent]"),
     ['1', 'seconds', '14:10:00']);
+  await js("document.querySelector('#date-filter [data-date=\"2026-11-20\"]').click()");
   window.webContents.send('courtwatch:state', {
     ...state, options: { ...state.options, campus: 'shahe' }, venues: [{ id: '57', label: '综合馆', dates: state.venues[0].dates, at: 1 }],
     rows: [{ ...state.rows[0], venue: '57', courts: [1, 'B1', 'B2', 'B6'] }],
@@ -334,6 +371,9 @@ async function run() {
   await paint();
   assert.deepEqual(await js("[...document.querySelectorAll('.court-number')].map(mark => mark.textContent)"), ['1', 'B1', 'B2', 'B6']);
   assert.equal(await js("document.querySelector('.court-numbers').getAttribute('aria-label')"), '1、B1、B2、B6号');
+  assert.deepEqual(await js(`[document.querySelector('#date-filter').hidden,
+    document.querySelector('.schedule').getBoundingClientRect().bottom - document.querySelector('#booking-links').getBoundingClientRect().bottom <= 18]`),
+    [true, true], 'one available date omits date controls and its links sit directly above the settings');
   window.webContents.send('courtwatch:state', state);
   await paint();
   async function theme(value) {
@@ -411,13 +451,12 @@ async function run() {
     [...document.querySelectorAll('.navigation button, #account-action')].every(el => {
       const box = el.getBoundingClientRect();
       return box.width > 0 && box.left >= 0 && box.right <= innerWidth;
-    }) && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth`),
+    }) && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth
+    && document.querySelector('.table-wrap').scrollWidth <= document.querySelector('.table-wrap').clientWidth`),
     true, 'doubling text and UI size keeps Chinese navigation, account and schedule available');
   window.webContents.setZoomFactor(1);
   await paint();
-  assert.equal(await window.webContents.executeJavaScript(`
-    document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom
-  `), true, 'Monitoring controls move below the results at the minimum width');
+  assert.equal(await toolsBelowResults(), true, 'monitoring tools stay below the agenda at the minimum width');
   const crowdedRow = { ...state.rows[0], courts: Array.from({ length: 120 }, (_, i) => i + 1) };
   window.webContents.send('courtwatch:state', { ...state, rows: [crowdedRow] });
   await paint();

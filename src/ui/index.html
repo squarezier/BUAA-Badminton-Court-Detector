@@ -10,7 +10,7 @@
 <body>
   <div class="shell">
     <div class="window-bar" aria-hidden="true"></div>
-    <aside class="rail">
+    <header class="rail">
       <div class="brand"><img src="icon.png" alt="" width="44" height="44"><strong>候羽</strong></div>
       <nav aria-label="应用页面" class="navigation">
         <button type="button" class="nav current" data-page="monitor" aria-current="page"><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
@@ -23,7 +23,7 @@
           <button id="account-action" class="quiet" type="button">登录北航</button>
         </section>
       </div>
-    </aside>
+    </header>
 
     <main class="workspace">
       <section id="page-monitor" aria-labelledby="selected-campus">
@@ -31,7 +31,7 @@
           <div class="venue-summary">
             <div class="court-plan" aria-hidden="true"><i></i><b></b></div>
             <div class="venue-heading"><h1 id="selected-campus">沙河校区</h1><p id="selected-venues">综合馆</p></div>
-            <dl class="availability-total"><dt>可约场次</dt><dd id="count">—</dd></dl>
+            <dl class="availability-total"><dt>校区可约场次</dt><dd id="count">—</dd></dl>
           </div>
           <div class="monitor-toolbar">
             <div id="monitor-state" class="status" data-tone="neutral" role="status" aria-atomic="true"><i class="dot" aria-hidden="true"></i><span id="monitor-state-label">等待登录</span><span id="monitor-context" class="sr-only"></span></div>
@@ -45,11 +45,14 @@
 
         <div class="monitor-grid">
           <section class="schedule" aria-labelledby="schedule-title-label">
-            <div class="section-head"><h2 id="schedule-title-label" tabindex="-1">当前空场</h2><span id="scope" class="subtle"></span></div>
+            <div class="section-head agenda-head">
+              <div class="agenda-title"><h2 id="schedule-title-label" tabindex="-1">当前空场</h2><span id="scope" class="subtle" title="官网已核验的日期范围"></span></div>
+              <div id="date-filter" class="date-filter" role="group" aria-label="按日期查看空场" hidden></div>
+            </div>
             <div id="read-error" class="warning" role="status" hidden></div>
             <div id="empty" class="empty"><strong id="empty-title">登录北航后可查看场地</strong><p id="empty-note" hidden></p></div>
             <div class="table-wrap" id="table-wrap" hidden>
-              <table><thead><tr><th scope="col">日期</th><th scope="col" id="col-time">时段（北京时间）</th><th scope="col" id="col-venue">场馆</th><th scope="col" id="col-courts">场号</th><th scope="col" id="col-price">价格</th></tr></thead><tbody id="rows"></tbody></table>
+              <table><thead><tr><th scope="col">日期</th><th scope="col" id="col-time">时段<span class="time-zone"> · 北京时间</span></th><th scope="col" id="col-venue">场馆</th><th scope="col" id="col-courts">场号</th><th scope="col" id="col-price">价格</th></tr></thead><tbody id="rows"></tbody></table>
             </div>
             <div class="booking-links" id="booking-links" aria-label="北航官方预约入口"></div>
           </section>

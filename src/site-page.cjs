@@ -3,9 +3,20 @@
 // These functions run in an isolated world on the normal booking page.
 // Their only controls are the date tabs and the timetable paging arrows.
 function signedInOnBookingSite() {
-  const authenticated = [...document.querySelectorAll('a, button, li, span, div')].some(element =>
-    element.checkVisibility({ opacityProperty: true, visibilityProperty: true }) && (element.innerText ?? '').trim() === '退出');
-  return authenticated;
+  const visible = element => element.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+  for (const element of document.querySelectorAll('a, button, li, span, div')) {
+    if (!element.textContent.includes('退') || !visible(element) || (element.innerText ?? '').trim() !== '退出') continue;
+    // innerText alone also includes transparent descendants. Verify the
+    // visible text nodes for the small number of actual label candidates.
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let label = '';
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (visible(parent)) label += node.data;
+    }
+    if (label.trim() === '退出') return true;
+  }
+  return false;
 }
 
 async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
@@ -225,15 +236,19 @@ async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
       document.body.innerText.match(hoursPattern)?.slice(1);
   }
 
-  const loaded = await waitFor(() => {
-    const hours = operatingHours();
-    if (!dateButtons().length || !hours) return false;
-    // After closing the selected day can have no grid and no closure message.
-    return (activeDate() === todayLabel && nowClock >= hours[1]) || readWindow() || closedMessage() ||
-      (activeDate() && !busy() && document.querySelector('.spaceTable table .reserveBlock'));
+  const hours = await waitFor(() => {
+    if (!dateButtons().length) return null;
+    const range = operatingHours();
+    if (!range) return null;
+    const selected = activeDate();
+    // The full grid is validated in scanDay. A populated selected tab only
+    // needs a readiness check here, including today's blank after-hours page.
+    if (selected === todayLabel && nowClock >= range[1]) return range;
+    if (selected && !busy() && document.querySelector('.spaceTable table .reserveBlock')) return range;
+    return closedMessage() || readWindow() ? range : null;
   }, 9000);
-  if (!loaded) return { error: 'layout' };
-  const [opening, closing] = operatingHours();
+  if (!hours) return { error: 'layout' };
+  const [opening, closing] = hours;
   const labels = dateButtons().map(labelOf);
   if (labels.length > bookable.size || ![opening, closing, nowClock].every(validClock) || mins(opening) >= mins(closing)) return { error: 'layout' };
   // The official notice disappears automatically. Keep only matching date labels.

@@ -187,6 +187,7 @@ function pushRequest(connection, message) {
 }
 
 async function sendPush(candidate, message, signal, fetchRequest = fetch) {
+  if (signal?.aborted) return { kind: 'retry', text: '通知尚未发送，恢复后将重新核验场地。' };
   const connection = validatedPushConnection(candidate);
   if (!connection) return { kind: 'blocked', text: '通知配置无效，请重新连接。' };
   const feishu = connection.provider === 'feishu';
@@ -207,7 +208,7 @@ async function sendPush(candidate, message, signal, fetchRequest = fetch) {
     });
     if (feishu && response.status !== 429 && response.status < 500) {
       const data = await readSmallJson(response).catch(() => null);
-      if (signal?.aborted) return { kind: 'cancelled' };
+      if (!data && signal?.aborted) return { kind: 'cancelled' };
       return feishuResult(response, data);
     }
     if (!response.ok) {

@@ -5,11 +5,13 @@ import argparse
 import hashlib
 import json
 import plistlib
+import re
 import shutil
 import struct
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 from zipfile import ZIP_DEFLATED, ZipFile
 from icon import windows_icon
 
@@ -57,8 +59,14 @@ def verified_runtime(location, target):
 def stage_app(resources, stage):
     with tempfile.TemporaryDirectory(dir=stage) as source:
         app = Path(source)
-        shutil.copy(ROOT / 'package.json', app)
-        shutil.copytree(ROOT / 'src', app / 'src')
+        for name in ['package.json', *MANIFEST['files']]:
+            relative = Path(name)
+            original = ROOT / relative
+            if relative.is_absolute() or '..' in relative.parts or original.resolve() != original or not original.is_file():
+                raise ValueError(f'Invalid distribution file: {name}')
+            destination = app / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, destination)
         digest = subprocess.check_output(['node', ROOT / 'scripts/seal-distribution.mjs',
                                           'archive', app, resources / 'app.asar'], text=True)
     if len(digest) != 64 or any(ch not in '0123456789abcdef' for ch in digest):
@@ -72,8 +80,23 @@ def seal_runtime(executable, platform):
 
 
 def copy_guide(folder):
-    shutil.copy(ROOT / 'docs' / 'guide.md', folder / '使用说明.md')
-    shutil.copy(ROOT / 'docs' / 'target.png', folder / 'target.png')
+    docs = ROOT / 'docs'
+    guide = docs / 'guide.md'
+    shutil.copyfile(guide, folder / '使用说明.md')
+    text = guide.read_text(encoding='utf-8')
+    images = re.findall(r'!\[[^\]]*\]\(([^\s)]+)\)', text)
+    images += re.findall(r'<img\b[^>]*?\bsrc=["\']([^"\']+)["\']', text, re.I)
+    for url in set(images):
+        parsed = urlsplit(url)
+        if parsed.scheme or parsed.netloc:
+            continue
+        path = Path(unquote(parsed.path))
+        image = docs / path
+        if path.is_absolute() or '..' in path.parts or path.suffix.lower() != '.png' or image.resolve() != image:
+            raise ValueError(f'Invalid offline guide image: {url}')
+        target = folder / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(image, target)
 
 
 def mac_icon(stage, resources):

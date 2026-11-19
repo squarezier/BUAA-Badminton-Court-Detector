@@ -1,4 +1,5 @@
 name: Houyu desktop release checks
+run-name: Houyu desktop checks · ${{ github.ref_name }}
 on:
   push:
     branches: ['qa-desktop-v*']
@@ -7,7 +8,7 @@ permissions:
   contents: read
 jobs:
   package-windows:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -19,6 +20,23 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - run: npm ci --ignore-scripts
+      - name: Audit the locked build dependencies
+        run: npm audit --include=dev --registry=https://registry.npmjs.org
+      - name: Verify every tracked application file is declared for distribution
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          manifest = json.loads(Path('package.json').read_text())
+          sources = subprocess.check_output(['git', 'ls-files', '-z', '--', 'src']).decode().rstrip('\0').split('\0')
+          assert sorted(sources) == sorted(manifest['files']), 'Update the list of files in the release package'
+          PY
+      - name: Verify the Windows icon artwork matches the shared desktop artwork
+        run: |
+          python3 scripts/icon.py "$RUNNER_TEMP/houyu-icons"
+          cmp src/ui/icon.png "$RUNNER_TEMP/houyu-icons/icon.png"
+          cmp src/ui/trayTemplate.png "$RUNNER_TEMP/houyu-icons/trayTemplate.png"
       - name: Package the checksum-verified official Electron runtime
         run: |
           python3 scripts/package.py win32-x64 runtime staging Houyu-Windows-x64.zip

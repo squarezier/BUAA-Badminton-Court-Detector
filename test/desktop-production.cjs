@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
+const { app, BrowserWindow, Menu, powerMonitor, safeStorage, session } = require('electron');
 const { beijingDay, calendarDates } = require('../src/courts.cjs');
 const { Preferences } = require('../src/preferences.cjs');
 const nativeVault = Object.fromEntries(['isAsyncEncryptionAvailable', 'encryptStringAsync', 'decryptStringAsync']
@@ -33,6 +33,12 @@ let pushed = [];
 let loads = 0;
 let started = false;
 let cases = 0;
+let trayMenusBuilt = 0;
+const buildMenu = Menu.buildFromTemplate.bind(Menu);
+Menu.buildFromTemplate = template => {
+  if (template[0]?.label === '打开窗口') trayMenusBuilt++;
+  return buildMenu(template);
+};
 
 process.env.COURTWATCH_DEV_PROFILE = profile;
 fs.mkdirSync(profile, { recursive: true });
@@ -201,6 +207,15 @@ async function run(win) {
   await fillDraft();
   powerMonitor.emit('lock-screen');
   await waitFor(clearedDraft, 'locking clears both unsubmitted credentials');
+  await fillDraft();
+  await js(`
+    const originalTimer = window.setTimeout;
+    try {
+      window.setTimeout = (callback, delay, ...args) => originalTimer(callback, delay === 300000 ? 25 : delay, ...args);
+      document.querySelector('#feishu-secret').dispatchEvent(new Event('input', { bubbles: true }));
+    } finally { window.setTimeout = originalTimer; }
+  `);
+  await waitFor(clearedDraft, 'unsubmitted credentials expire even without a platform lock-screen event');
   assert.equal(pushRequests, 0);
   cases++;
   assert.equal((await state()).delivery.configured, false, 'a locked startup never selects a plaintext fallback');
@@ -478,6 +493,9 @@ async function run(win) {
   await waitFor(view => !view.delivery.configured && view.pushService === null, 'disconnect notification provider');
   assert.equal(storedCiphertext(), null);
   assert.equal(pushed.length, 4);
+  cases++;
+
+  assert.equal(trayMenusBuilt, process.platform === 'linux' ? 0 : 3, 'reuse the paused, checking and watching tray menus');
   cases++;
 
   clearTimeout(deadline);

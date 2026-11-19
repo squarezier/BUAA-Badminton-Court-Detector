@@ -34,6 +34,8 @@ let changingConnection = false;
 let campusSessionNumber = 0;
 const nextPushTestAt = new Map();
 const scanLimits = new Map();
+const trayMenus = new Map();
+let trayLabel;
 
 // Electron includes the complete navigation URL in its default load warning.
 // SSO return URLs may carry short-lived tickets. Retain the network error only.
@@ -125,14 +127,17 @@ function publish(state) {
   sendToInterface('courtwatch:state', viewState(state));
   if (!tray || tray.isDestroyed()) return;
   const label = state.running ? (state.checking ? '正在查场地' : '监控中') : '监控已暂停';
+  if (label === trayLabel) return;
   tray.setToolTip(`${productName} · ${label}`);
-  tray.setContextMenu(Menu.buildFromTemplate([
+  if (!trayMenus.has(label)) trayMenus.set(label, Menu.buildFromTemplate([
     { label: '打开窗口', click: showMain },
     { label, enabled: false },
     { label: '暂停监控', enabled: state.running, click: () => monitor.stop() },
     { type: 'separator' },
     { label: '退出应用', click: () => app.quit() },
   ]));
+  tray.setContextMenu(trayMenus.get(label));
+  trayLabel = label;
 }
 
 function viewState(state) {
@@ -283,7 +288,6 @@ async function dispatch(message, signal) {
   sending = true;
   try {
     const connection = await prefs.readConnection();
-    if (signal?.aborted) return { kind: 'cancelled' };
     return await sendPush(connection, message, signal);
   } catch {
     return { kind: 'retry', retryAfterMs: 60000, text: '系统安全存储暂时无法解锁，下次核验到场地后重试。' };
