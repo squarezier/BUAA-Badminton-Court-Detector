@@ -34,10 +34,10 @@ let pushed = [];
 let loads = 0;
 let started = false;
 let cases = 0;
-let trayMenusBuilt = 0;
+const trayLabels = [];
 const buildMenu = Menu.buildFromTemplate.bind(Menu);
 Menu.buildFromTemplate = template => {
-  if (template[0]?.label === '打开窗口') trayMenusBuilt++;
+  if (template[0]?.label === '打开窗口') trayLabels.push(template[1].label);
   return buildMenu(template);
 };
 
@@ -526,7 +526,17 @@ async function run(win) {
   assert.equal(pushed.length, 4);
   cases++;
 
-  assert.equal(trayMenusBuilt, process.platform === 'linux' ? 0 : 3, 'reuse the paused, checking and watching tray menus');
+  if (process.platform === 'linux') {
+    assert.deepEqual(trayLabels, []);
+  } else {
+    assert.equal(trayLabels.length, new Set(trayLabels).size, 'reuse native menus when states recur');
+    for (const campus of ['沙河校区', '学院路校区']) {
+      assert.ok(trayLabels.includes(`${campus} · 监控已暂停`));
+      assert.ok(trayLabels.includes(`${campus} · 监控中`));
+    }
+    assert.ok(trayLabels.some(label => label.endsWith('等待唤醒')));
+    assert.ok(trayLabels.length <= 6, 'regular polls leave the native tray menu stable');
+  }
   cases++;
 
   clearTimeout(deadline);

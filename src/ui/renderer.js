@@ -18,6 +18,7 @@ let renderedRows = '';
 let expiryTimer;
 let intervalDirty = false;
 let pushError = '';
+let testingPush = false;
 let editorVersion;
 let editorDay;
 let targetDirty = false;
@@ -33,6 +34,7 @@ function showToast(message) {
   const toast = get('toast');
   toast.textContent = message;
   toast.hidden = false;
+  playMotion(toast, 'houyu-toast', [{ opacity: .7, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], 220);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.hidden = true; }, 4800);
 }
@@ -57,6 +59,20 @@ function runPushAction(action) {
   });
 }
 
+function runPushTest(action) {
+  return runPushAction(async () => {
+    testingPush = true;
+    render();
+    try {
+      await action();
+      if (activePage === 'feishu' && current.pushService === 'feishu') {
+        fly(get('letter-plane'), get('letter-trail'), 'houyu-letter', 460);
+        reveal(get('push-feedback'));
+      }
+    } finally { testingPush = false; }
+  });
+}
+
 function clearConnectionInputs() {
   clearTimeout(connectionDraftTimer);
   get('feishu-webhook').value = '';
@@ -74,16 +90,45 @@ function stopMotion(root) {
   }
 }
 
-function playMotion(element, id, frames, duration) {
+function playMotion(element, id, frames, duration, easing = 'cubic-bezier(.22,.72,.28,1)') {
   if (reducedMotion.matches || !element.checkVisibility()) return;
   for (const animation of element.getAnimations()) {
     if (animation.id === id) animation.cancel();
   }
-  element.animate(frames, { id, duration, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  element.animate(frames, { id, duration, easing });
 }
 
 function reveal(element) {
-  playMotion(element, 'houyu-reveal', [{ opacity: .84, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], 150);
+  playMotion(element, 'houyu-reveal', [{ opacity: .87, transform: 'translateY(5px)' }, { opacity: 1, transform: 'none' }], 230);
+}
+
+const flightEasing = 'cubic-bezier(.28,.22,.34,1)';
+
+function fly(element, route, id, duration) {
+  if (reducedMotion.matches || !element.checkVisibility()) return;
+  const length = route.getTotalLength();
+  let angle = 0;
+  const frames = Array.from({ length: 25 }, (_, index) => {
+    const at = length * index / 24;
+    const point = route.getPointAtLength(at);
+    const before = route.getPointAtLength(Math.max(0, at - .3));
+    const after = route.getPointAtLength(Math.min(length, at + .3));
+    const heading = Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI;
+    angle = heading + 360 * Math.round((angle - heading) / 360);
+    return { transform: `translate(${point.x}px, ${point.y}px) rotate(${angle}deg)` };
+  });
+  playMotion(element, id, frames, duration, flightEasing);
+}
+
+function showServe() {
+  playMotion(get('serve-arc'), 'houyu-serve', [{ strokeDashoffset: '1' }, { strokeDashoffset: '0' }], 480, flightEasing);
+  fly(get('shuttle'), get('serve-arc'), 'houyu-shuttle', 480);
+}
+
+function drawDial() {
+  const dial = get('dial-range');
+  const end = dial.getAttribute('stroke-dasharray');
+  if (end) playMotion(dial, 'houyu-dial', [{ strokeDasharray: '0 1440' }, { strokeDasharray: end }], 390);
 }
 
 function moveNavInk(button) {
@@ -96,7 +141,7 @@ function moveNavInk(button) {
   if (!slide) return;
   const offset = from - ink.getBoundingClientRect().top;
   if (Math.abs(offset) > .5) {
-    playMotion(ink, 'houyu-nav', [{ transform: `translateY(${offset}px)` }, { transform: 'none' }], 200);
+    playMotion(ink, 'houyu-nav', [{ transform: `translateY(${offset}px)` }, { transform: 'none' }], 240);
   }
 }
 
@@ -119,6 +164,8 @@ function showPage(page) {
   const workspace = get('workspace');
   const changed = page !== activePage;
   if (changed) {
+    clearTimeout(toastTimer);
+    get('toast').hidden = true;
     pageScroll.set(activePage, workspace.scrollTop);
     stopMotion(get(`page-${activePage}`));
   }
@@ -147,8 +194,11 @@ function showPage(page) {
     activePage = page;
     workspace.scrollTop = pageScroll.get(page) ?? 0;
     reveal(panel);
-    if (page === 'monitor') {
-      playMotion(get('serve-arc'), 'houyu-serve', [{ strokeDashoffset: '1' }, { strokeDashoffset: '0' }], 320);
+    if (page === 'monitor') showServe();
+    if (page === 'target') drawDial();
+    if (page === 'feishu') {
+      playMotion(document.querySelector('.message-card'), 'houyu-card',
+        [{ opacity: .8, transform: 'translateY(6px) rotate(-.6deg)' }, { opacity: 1, transform: 'none' }], 310);
     }
   }
 }
@@ -196,6 +246,8 @@ function renderTarget(options, venues, now) {
     get('band-range').setAttribute('x', String(start));
     get('band-range').setAttribute('width', String(end - start));
     get('band-ends').setAttribute('d', `M${start} 3v17 M${end} 3v17`);
+    get('dial-range').setAttribute('stroke-dasharray', `${end - start} ${1440 - (end - start)}`);
+    get('dial-range').setAttribute('stroke-dashoffset', String(-start));
   }
   get('day-band').hidden = target === null;
   const duration = end - start;
@@ -257,7 +309,8 @@ function visibleBand() {
   const rect = band.getBoundingClientRect();
   if (!track.width || !rect.width) return null;
   const units = band.ownerSVGElement.viewBox.baseVal.width / track.width;
-  return { start: (rect.left - track.left) * units, width: rect.width * units };
+  return { start: (rect.left - track.left) * units, width: rect.width * units,
+    savedStart: band.x.baseVal.value, savedWidth: band.width.baseVal.value };
 }
 
 function settleBand(previous) {
@@ -265,11 +318,12 @@ function settleBand(previous) {
   const range = get('band-range');
   const start = range.x.baseVal.value;
   const width = range.width.baseVal.value;
-  if (!width || (Math.abs(start - previous.start) < .5 && Math.abs(width - previous.width) < .5)) return;
+  if (!width || (start === previous.savedStart && width === previous.savedWidth)) return;
   const scale = previous.width / width;
   const offset = previous.start - start * scale;
   playMotion(get('band-selection'), 'houyu-range',
-    [{ transform: `translateX(${offset}px) scaleX(${scale})` }, { transform: 'none' }], 240);
+    [{ transform: `translateX(${offset}px) scaleX(${scale})` }, { transform: 'none' }], 320);
+  drawDial();
 }
 
 function submitTarget(event) {
@@ -289,8 +343,8 @@ function submitTarget(event) {
       if (activePage === 'target' && current.options.campus === campus) {
         settleBand(previous);
         reveal(get('saved-place'));
+        showToast('提醒目标已保存。');
       }
-      showToast('提醒目标已保存。');
     } catch (err) { text('target-error', err.message || '目标保存失败，请重试。'); error.hidden = false; }
   });
 }
@@ -448,12 +502,12 @@ function render() {
   if (running) {
     status = '监控运行中';
     tone = 'good';
-    if (checking) status = '正在查询';
     if (suspended) { status = '设备休眠'; tone = 'neutral'; }
-    else if (errors.length && !checking) { status = '下轮重试'; tone = 'warn'; }
+    else if (errors.length) { status = '下轮重试'; tone = 'warn'; }
   }
-  text('monitor-state-label', status);
-  text('monitor-context', anyResult && !checking ? `，${campusNames[options.campus]}可约 ${slotCount} 场次` : '');
+  text('monitor-state-label', running && checking && !suspended ? '正在查询' : status);
+  const availability = anyResult ? `，可约 ${slotCount} 场次` : '';
+  text('monitor-context', `${campusNames[options.campus]}，${status}${availability}`);
   get('monitor-state').dataset.tone = tone;
   text('selected-campus', campusNames[options.campus]);
   text('selected-venues', venues.map(venueName).join(' · '));
@@ -506,7 +560,7 @@ function render() {
   const legacyService = { pushplus: 'PushPlus', serverchan: 'Server酱' }[current.pushService];
   text('preview-title', `候羽｜${campusNames[options.campus]}疑似退订 2 场次`);
   text('preview-date', shortDay(isoDay.format(now + 86400000)));
-  text('preview-slot', `18:00–19:00 · ${venues[0]?.label ?? '羽毛球馆'}`);
+  text('preview-venue', venues[0]?.label ?? '羽毛球馆');
   const pushNeedsAttention = delivery.status === 'blocked' || (delivery.persistent && !delivery.configured);
   const pushStatus = legacyService ? '待切换' : pushNeedsAttention ? '需检查配置' : delivery.configured ? '已连接' : '未连接';
   get('push-service').hidden = !legacyService;
@@ -515,6 +569,7 @@ function render() {
   get('push-status').dataset.tone = pushNeedsAttention ? 'warn' : delivery.configured && !legacyService ? 'good' : 'neutral';
   get('storage-note').hidden = !delivery.configured || delivery.persistent;
   get('push-connect').disabled = busy;
+  text('push-connect', testingPush ? '正在测试…' : '连接并测试');
   get('feishu-webhook').disabled = busy;
   get('feishu-secret').disabled = busy;
   get('feishu-session-only').disabled = busy;
@@ -529,10 +584,10 @@ function render() {
   get('push-unlock').hidden = delivery.configured || !delivery.persistent;
   get('push-unlock').disabled = busy;
   get('push-test').disabled = busy;
-  text('push-test', legacyService ? '测试当前渠道' : '发送测试');
+  text('push-test', testingPush ? '正在测试…' : legacyService ? '测试当前渠道' : '发送测试');
   get('remove-connection').disabled = busy;
   get('push-feedback').hidden = !pushError && !delivery.text;
-  get('push-feedback').dataset.tone = pushError || ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : 'neutral';
+  get('push-feedback').dataset.tone = pushError || ['blocked', 'retry', 'unknown'].includes(delivery.status) ? 'warn' : delivery.status === 'accepted' ? 'good' : 'neutral';
   const deliveryNote = delivery.at ? `${time.format(delivery.at)} · ${delivery.text}` : delivery.text;
   text('push-feedback', pushError || deliveryNote);
 }
@@ -549,9 +604,11 @@ function updateIntervalBounds() {
   get('interval').title = seconds ? '1–86400 秒' : '1–1440 分钟';
 }
 
-function updateOptions(patch) {
-  const options = { ...current.options, ...patch };
-  return act(() => app.saveOptions(options));
+function changeCampus(campus) {
+  return act(async () => {
+    await app.saveOptions({ ...current.options, campus });
+    if (activePage === 'monitor' && current.options.campus === campus) showServe();
+  });
 }
 
 if (!app) {
@@ -577,9 +634,12 @@ if (!app) {
   get('open-target').addEventListener('click', () => showPage('target'));
   get('date-filter').addEventListener('click', event => {
     const button = event.target.closest('button[data-date]');
-    if (!button) return;
+    if (!button || button.dataset.date === viewedDate) return;
+    const direction = button.dataset.date > viewedDate ? 1 : -1;
     viewedDate = button.dataset.date;
     render();
+    const content = get('table-wrap').hidden ? get('empty') : get('table-wrap');
+    playMotion(content, 'houyu-date', [{ opacity: .84, transform: `translateX(${direction * 5}px)` }, { opacity: 1, transform: 'none' }], 230);
   });
   get('target-form').addEventListener('input', () => {
     targetDirty = true;
@@ -614,7 +674,7 @@ if (!app) {
     });
   });
   for (const input of document.querySelectorAll('input[name="campus"]')) {
-    input.addEventListener('change', () => { if (input.checked && current) void updateOptions({ campus: input.value }); });
+    input.addEventListener('change', () => { if (input.checked && current) void changeCampus(input.value); });
   }
   get('push-guide').addEventListener('click', () => act(() => app.pushGuide()));
   get('replace-connection').addEventListener('click', () => {
@@ -641,13 +701,14 @@ if (!app) {
   });
   get('push-form').addEventListener('submit', event => {
     event.preventDefault();
+    if (busy) return;
     const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value, sessionOnly: get('feishu-session-only').checked };
     clearConnectionInputs();
-    void runPushAction(async () => { await app.connectPush(connection); replacingConnection = false; });
+    void runPushTest(async () => { await app.connectPush(connection); replacingConnection = false; });
   });
   get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); clearConnectionInputs(); replacingConnection = false; showToast('通知连接已断开。'); }));
   get('push-unlock').addEventListener('click', () => runPushAction(app.unlockPush));
-  get('push-test').addEventListener('click', () => runPushAction(app.testPush));
+  get('push-test').addEventListener('click', () => runPushTest(app.testPush));
   app.onState(receive);
   app.onClearDraft(clearConnectionInputs);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));

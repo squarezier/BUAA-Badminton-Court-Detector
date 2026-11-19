@@ -2,17 +2,17 @@
 <h1 align="center">候羽</h1>
 <p align="center">北航羽毛球退订提醒 · BUAA Badminton Court Detector</p>
 
-想打周五晚上的球，可以在候羽里选「学院路」「周五」「18:00–20:00」。候羽在主馆或训练馆看到符合条件的退订，就会把时段和场号发到飞书群。点消息底部的场馆名，去北航官网订场。
+比如你想在学院路打周五晚上的球，就把提醒目标设成周五 18:00–20:00。主馆或训练馆有符合条件的场次从已约变为可约时，候羽会把时段和场号发到你的飞书群。点消息底部的场馆名，就能去北航官网订场。
 
-## 下载 v2.2.0
+## 下载 v2.3.0
 
 | 电脑 | 下载 | 打开 |
 | --- | --- | --- |
-| <img src="docs/platforms/apple.svg" width="16" alt=""> Mac · macOS 13 及以上 | [Apple 芯片（M 系列）](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-macOS-arm64.zip) · [Intel 芯片](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-macOS-x64.zip) | 解压，打开「候羽」 |
-| <img src="docs/platforms/windows.svg" width="16" alt=""> Windows 10 / 11 | [Windows x64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-Windows-x64.zip) | 解压整个文件夹，打开 `Houyu.exe` |
-| <img src="docs/platforms/linux.svg" width="16" alt=""> Ubuntu 22.04 / 24.04 | [Linux amd64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-Linux-amd64.deb) | 安装 DEB，在应用菜单打开「候羽」 |
+| <img src="docs/platforms/apple.svg" width="16" alt=""> Mac · macOS 13 及以上 | [Apple 芯片（M 系列）](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-macOS-arm64.zip) · [Intel 芯片](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-macOS-x64.zip) | 解压，打开「候羽」 |
+| <img src="docs/platforms/windows.svg" width="16" alt=""> Windows 10 / 11 | [Windows x64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-Windows-x64.zip) | 解压整个文件夹，打开 `Houyu.exe` |
+| <img src="docs/platforms/linux.svg" width="16" alt=""> Ubuntu 22.04 / 24.04 | [Linux amd64](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-Linux-amd64.deb) | 安装 DEB，在应用菜单打开「候羽」 |
 
-[版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v2.2.0) · [SHA-256 校验文件](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-SHA256SUMS.txt) · [源码包](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.2.0/Houyu-Source.zip)
+[版本说明](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/tag/v2.3.0) · [SHA-256 校验文件](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-SHA256SUMS.txt) · [源码包](https://github.com/squarezier/BUAA-Badminton-Court-Detector/releases/download/v2.3.0/Houyu-Source.zip)
 
 ## 使用手册
 
@@ -24,7 +24,7 @@
 
 用**电脑上的飞书**打开收提醒的群。还没有合适的群，可以点头像旁的 **＋ → 创建群组**，建一个叫「羽毛球提醒」的群。以后候羽的消息就发到这里。
 
-群里已经有自己建好的自定义机器人？在 **设置 → 群机器人** 里点开它，从下面第 3 步接着做。
+如果群里已经有自己的自定义机器人，在 **设置 → 群机器人** 里点开它，从第 3 步接着做。
 
 1. 在群聊右上角点 **··· → 设置**，找到 **群机器人**。点 **添加机器人**，在弹出的列表里选 **自定义机器人**。
 
@@ -41,7 +41,7 @@
 
 ### 发一条测试消息
 
-回到候羽的 **飞书通知**，点 **连接并测试**。打开刚才那个飞书群，看到机器人发来的 **「候羽｜测试提醒」**，就连好了。以后打开候羽可以沿用这个连接。在共用电脑上，勾选 **仅本次使用** 就只用到这次退出。
+回到候羽的 **飞书通知**，点 **连接并测试**。飞书受理后，消息示例旁的纸飞机会飞过一次。打开刚才那个群，看到机器人发来的 **「候羽｜测试提醒」**，就连好了。在共用电脑上可以先勾选 **仅本次使用**，退出候羽后连接就会清除。
 
 <img src="docs/feishu.png" width="760" alt="候羽的飞书通知页，Webhook 在上、签名密钥在下，连接并测试按钮位于表单下方">
 
@@ -68,9 +68,9 @@
   <img src="docs/monitor.png" width="920" alt="学院路首页，表格上方显示周五 18:00–20:00 的提醒目标，符合时段的行列出可约场号">
 </picture>
 
-设好后，空场表上方会显示你等的日期和时间。表内写着「目标内」的就是符合范围的行，**绿色数字是可约场号**。表格右上角的日期只用来翻看空场。学院路看主馆和训练馆，沙河看综合馆的数字场和 B 区场。
+保存后，「当前提醒范围」的表盘和时间带会标出这两小时。回到场地监控，空场表上方也会显示你等的日期和时间。表内写着「目标内」的行符合提醒范围，**绿色数字是可约场号**。表格右上角的日期只用来翻看空场。学院路看主馆和训练馆，沙河看综合馆的数字场和 B 区场。
 
-等场时让电脑保持唤醒、联网。关掉窗口照常监控，退出候羽后停止。
+等场时让电脑保持唤醒、联网。关掉窗口后，可以从菜单栏或系统托盘里的候羽图标查看当前校区和监控状态。退出候羽后，监控随之停止。
 
 <details>
 <summary>看一眼提醒目标怎么填</summary>

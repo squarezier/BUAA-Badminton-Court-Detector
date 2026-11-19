@@ -132,7 +132,9 @@ function sendToInterface(channel, ...values) {
 function publish(state) {
   sendToInterface('courtwatch:state', viewState(state));
   if (!tray || tray.isDestroyed()) return;
-  const label = state.running ? (state.checking ? '正在查场地' : '监控中') : '监控已暂停';
+  // Keep the native menu in place between polls, including while it is open.
+  const status = !state.running ? '监控已暂停' : state.suspended ? '等待唤醒' : '监控中';
+  const label = `${CAMPUSES[state.options.campus].label} · ${status}`;
   if (label === trayLabel) return;
   tray.setToolTip(`${productName} · ${label}`);
   if (!trayMenus.has(label)) trayMenus.set(label, Menu.buildFromTemplate([
@@ -500,7 +502,10 @@ async function initialize() {
   });
 
   const trayPath = process.platform === 'darwin' ? path.join(__dirname, 'ui', 'trayTemplate.png') : ICON;
-  const trayImage = nativeImage.createFromPath(trayPath).resize({ width: 18, height: 18 });
+  const source = nativeImage.createFromPath(trayPath);
+  const size = process.platform === 'win32' ? 16 : 18;
+  const trayImage = source.resize({ width: size });
+  trayImage.addRepresentation({ scaleFactor: 2, dataURL: source.resize({ width: size * 2 }).toDataURL() });
   if (process.platform === 'darwin') trayImage.setTemplateImage(true);
   try {
     tray = new Tray(trayImage);

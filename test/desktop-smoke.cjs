@@ -595,7 +595,7 @@ async function checkMotion(window, state, paint, js) {
       return [ink.parentElement.dataset.page, first.playState, second.effect.getTiming().duration,
         Math.abs(ink.getBoundingClientRect().top - before) < 1];
     })()`);
-    assert.deepEqual(inkRetarget, ['feishu', 'idle', 200, true], 'a second navigation picks up the marker at its visible position');
+    assert.deepEqual(inkRetarget, ['feishu', 'idle', 240, true], 'a second navigation picks up the marker at its visible position');
     const rapid = await js(`(() => {
       const nav = page => document.querySelector('[data-page="' + page + '"]').click();
       nav('target'); nav('feishu');
@@ -607,16 +607,42 @@ async function checkMotion(window, state, paint, js) {
         document.activeElement.id, work.scrollTop, document.querySelector('#feishu-webhook').value,
         document.querySelectorAll('.workspace > section:not([hidden])').length];
     })()`);
-    assert.deepEqual(rapid, [150, true, 'selected-campus', scroll, '', 1],
+    assert.deepEqual(rapid, [230, true, 'selected-campus', scroll, '', 1],
       'rapid switches restore the agenda, immediately clear the draft, and keep the same transition on reselection');
     await settle();
+    const spoken = await js(`(() => {
+      const context = document.querySelector('#monitor-context[role=status]');
+      window.statusUpdates = 0;
+      window.statusObserver = new MutationObserver(() => { statusUpdates += 1; });
+      statusObserver.observe(context, { childList: true, subtree: true, characterData: true });
+      return context.textContent;
+    })()`);
     contents.send('courtwatch:state', { ...state, checking: true });
     await paint();
     assert.deepEqual(await js(`[document.getAnimations().some(a => a.id.startsWith('houyu-')), work.scrollTop,
       document.querySelector('#nav-ink').parentElement.getAttribute('aria-current')]`),
       [false, scroll, 'page'], 'background scans keep the artwork, marker and scroll position still');
+    contents.send('courtwatch:state', { ...state, checking: false });
+    await paint();
+    assert.deepEqual(await js(`(statusObserver.disconnect(), [document.querySelector('#monitor-state').getAttribute('role'),
+      document.querySelector('#monitor-context').textContent, statusUpdates])`), [null, spoken, 0],
+    'starting and finishing an unchanged scan produce no live-region announcements');
+
+    const dateMotion = await js(`(() => {
+      const choice = document.querySelector('[data-date="2026-11-20"][type=button]');
+      choice.click();
+      const table = document.querySelector('#table-wrap');
+      const first = table.getAnimations().find(a => a.id === 'houyu-date');
+      choice.click();
+      document.querySelector('#date-filter [data-date=""]').click();
+      const second = table.getAnimations().find(a => a.id === 'houyu-date');
+      return [first.playState, second.effect.getKeyframes()[0].transform, document.querySelector('#date-filter [aria-pressed=true]').textContent];
+    })()`);
+    assert.deepEqual(dateMotion, ['idle', 'translateX(-5px)', '全部'], 'rapid date changes keep the final selection and animate in the matching direction');
 
     await clickPage('target');
+    assert.deepEqual(await js(`[document.querySelector('#dial-range').getAttribute('stroke-dashoffset'),
+      document.querySelector('#dial-range').getAttribute('stroke-dasharray')]`), ['-1080', '120 1320']);
     const saveAndReadMotion = start => js(`new Promise((resolve, reject) => {
       const toast = document.querySelector('#toast');
       const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Target confirmation timed out')); }, 5000);
@@ -639,8 +665,10 @@ async function checkMotion(window, state, paint, js) {
       document.querySelector('#target-start').value = ${JSON.stringify(start)};
       document.querySelector('#target-form').requestSubmit();
     })`);
-    assert.deepEqual(await saveAndReadMotion('16:30'), [150, 1080, 990], 'after a save the ruler travels from 18:00 to 16:30');
-    assert.deepEqual(await saveAndReadMotion('16:30'), [150, null, 990], 'saving the same time leaves the ruler at rest');
+    assert.deepEqual(await saveAndReadMotion('16:30'), [230, 1080, 990], 'after a save the ruler travels from 18:00 to 16:30');
+    assert.deepEqual(await saveAndReadMotion('16:30'), [230, null, 990], 'saving the same time leaves the ruler at rest');
+    await checkPushMotion(contents, state, js, settle);
+    await clickPage('target');
 
     contents.setZoomFactor(2);
     await paint();
@@ -675,7 +703,19 @@ async function checkMotion(window, state, paint, js) {
       for (const effect of heldMotion) effect.pause();
       return heldMotion.map(a => a.id).sort();
     })()`);
-    assert.deepEqual(held, ['houyu-nav', 'houyu-reveal', 'houyu-serve']);
+    assert.deepEqual(held, ['houyu-nav', 'houyu-reveal', 'houyu-serve', 'houyu-shuttle']);
+    assert.equal(await js(`(() => {
+      const flight = heldMotion.find(a => a.id === 'houyu-shuttle');
+      const arc = document.querySelector('#serve-arc');
+      const aligned = [0, 1].every(end => {
+        flight.currentTime = end * flight.effect.getTiming().duration;
+        const point = arc.getPointAtLength(end * arc.getTotalLength()).matrixTransform(arc.getScreenCTM());
+        const shuttle = new DOMPoint().matrixTransform(document.querySelector('#shuttle').getScreenCTM());
+        return Math.hypot(point.x - shuttle.x, point.y - shuttle.y) < 2;
+      });
+      flight.currentTime = flight.effect.getTiming().duration / 2;
+      return aligned;
+    })()`), true, 'the shuttle meets both ends of the court trajectory at the drawn positions');
     await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [
       { name: 'prefers-reduced-motion', value: 'reduce' }, { name: 'forced-colors', value: 'active' },
     ] });
@@ -685,6 +725,44 @@ async function checkMotion(window, state, paint, js) {
       document.querySelector('.court-plan').checkVisibility()]`), [true, 'monitor', true, false],
     'changing preferences mid-transition cancels all motion and leaves a visible selection in high contrast');
   } finally { contents.debugger.detach(); }
+}
+
+async function checkPushMotion(contents, state, js, settle) {
+  let reply;
+  ipcMain.handle('courtwatch:push-test', async () => {
+    const result = await reply.promise;
+    if (result.ok) contents.send('courtwatch:state', { ...state, delivery: {
+      ...state.delivery, status: 'accepted', text: '飞书已受理测试消息。', at: Date.parse('2026-11-18T14:08:00+08:00'),
+    } });
+    return result;
+  });
+  try {
+    await js("document.querySelector('[data-page=feishu]').click()");
+    await settle();
+    for (const accepted of [true, false]) {
+      reply = Promise.withResolvers();
+      const pending = await js(`(() => {
+        const button = document.querySelector('#push-test');
+        window.testResult = new Promise((resolve, reject) => {
+          const observer = new MutationObserver(() => {
+            if (button.disabled) return;
+            const flight = document.querySelector('#letter-plane').getAnimations().find(a => a.id === 'houyu-letter');
+            clearTimeout(timer); observer.disconnect();
+            resolve([document.querySelector('#push-feedback').dataset.tone, Boolean(flight)]);
+          });
+          const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Missing test result')); }, 5000);
+          observer.observe(button, { attributes: true });
+        });
+        button.click();
+        return [button.textContent, button.disabled, document.querySelector('#letter-plane').getAnimations().length];
+      })()`);
+      assert.deepEqual(pending, ['正在测试…', true, 0]);
+      reply.resolve(accepted ? { ok: true } : { ok: false, error: '测试未受理。' });
+      assert.deepEqual(await js('testResult'), accepted ? ['good', true] : ['warn', false],
+        'the dispatch animation plays only after the service accepts this user-initiated test');
+      await settle();
+    }
+  } finally { ipcMain.removeHandler('courtwatch:push-test'); }
 }
 
 app.whenReady().then(run).catch(error => {
