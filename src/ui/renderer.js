@@ -701,7 +701,7 @@ if (!app) {
   });
   get('push-form').addEventListener('submit', event => {
     event.preventDefault();
-    if (busy) return;
+    if (!current || busy) return;
     const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value, sessionOnly: get('feishu-session-only').checked };
     clearConnectionInputs();
     void runPushTest(async () => { await app.connectPush(connection); replacingConnection = false; });
