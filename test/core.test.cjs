@@ -37,7 +37,7 @@ test('an already green numbered court cannot trigger a Shahe B-court cancellatio
     async checkVenue(id) {
       return validatedSnapshot(id, [{ label: '11月18日', slots: green.map(court => slot(court)), reserved: booked.map(court => slot(court)) }], now);
     },
-    async dispatch(message) { pushes.push(message); return { kind: 'accepted', text: 'accepted' }; },
+    async dispatch(buildNotice) { pushes.push(buildNotice()); return { kind: 'accepted', text: 'accepted' }; },
   });
   t.after(() => monitor.stop());
   monitor.setAuth('signed-in');
@@ -97,7 +97,7 @@ test('initial availability and a newly published green slot do not send a notice
   const monitor = new CourtMonitor({
     options: { campus: 'shahe', interval: 2 }, now: () => now, onChange() {},
     async checkVenue() { return response; },
-    async dispatch(message) { pushes.push(message); return { kind: 'accepted', text: 'accepted' }; },
+    async dispatch(buildNotice) { pushes.push(buildNotice()); return { kind: 'accepted', text: 'accepted' }; },
   });
   t.after(() => monitor.stop());
   monitor.setAuth('signed-in');
@@ -123,7 +123,7 @@ test('a confirmed reservation reopening gets a distinct alert for the exact venu
   const monitor = new CourtMonitor({
     options: { campus: 'xueyuanlu', interval: 2 }, now: () => now, onChange() {},
     async checkVenue(id) { return response.get(id); },
-    async dispatch(message) { pushes.push(message); return { kind: 'accepted', text: 'accepted' }; },
+    async dispatch(buildNotice) { pushes.push(buildNotice()); return { kind: 'accepted', text: 'accepted' }; },
   });
   t.after(() => monitor.stop());
   monitor.setAuth('signed-in');
@@ -332,6 +332,9 @@ test('Feishu distinguishes rejections, throttling and uncertain delivery', async
   assert.equal((await send(new Response('', { status: 429, headers: { 'retry-after': '90' } }))).retryAfterMs, 90000);
   assert.equal((await send(new Response('<html>', { status: 502 }))).kind, 'unknown');
   assert.equal((await send(Response.json({ code: 0 }, { status: 400 }))).kind, 'blocked');
+  const malformed = await send(Response.json({ code: 'toString', msg: 'upstream validation detail' }, { status: 400 }));
+  assert.equal(malformed.kind, 'blocked');
+  assert.equal(malformed.text, '飞书拒绝发送，请核对 Webhook 和机器人的安全设置。');
 });
 
 test('a Feishu connection is sealed and survives reload', async t => {

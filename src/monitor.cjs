@@ -215,18 +215,25 @@ class CourtMonitor {
       if (signal.aborted || this.pending !== pending) return;
       const at = this.now();
       const batch = part.filter(slot => pending.has(slotKey(slot)) && startsAt(slot) > at);
-      if (batch.length && !await this.sendBatch(batch, pending, signal, at)) return;
+      if (batch.length && !await this.sendBatch(batch, pending, signal)) return;
     }
   }
 
-  async sendBatch(batch, pending, signal, now) {
+  async sendBatch(batch, pending, signal) {
     // After dispatch, an interrupted request may already have been accepted.
     for (const slot of batch) pending.delete(slotKey(slot));
     const eligible = new Map(batch.map(slot => [slotKey(slot), slot]));
     this.inFlightSlots = eligible;
+    // Unlocking the system vault may wait for the user. Build the card only
+    // when the transport is ready, using the current target and start times.
+    const buildNotice = () => {
+      const now = this.now();
+      const slots = [...eligible.values()].filter(slot => startsAt(slot) > now);
+      return slots.length ? notice(this.options.campus, slots, now, Boolean(this.target)) : null;
+    };
     let result;
     try {
-      result = await this.dispatch(notice(this.options.campus, batch, now, Boolean(this.target)), signal);
+      result = await this.dispatch(buildNotice, signal);
     } catch {
       result = { kind: 'unknown', text: '推送过程异常，送达状态待确认。' };
     } finally {
@@ -234,6 +241,7 @@ class CourtMonitor {
     }
     // Sleep preserves confirmed retries. Pausing or switching connections discards the queue.
     if (this.pending !== pending) return false;
+    if (result.kind === 'skipped') return true;
     if (result.kind === 'retry' || result.kind === 'blocked') {
       for (const [key, slot] of eligible) if (startsAt(slot) > this.now()) pending.set(key, slot);
     }

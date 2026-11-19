@@ -583,6 +583,19 @@ async function checkMotion(window, state, paint, js) {
     await paint();
     const scroll = await js("const work = document.querySelector('#workspace'); work.scrollTop = 80; work.scrollTop");
     assert.ok(scroll > 0, 'the test actually scrolls the agenda');
+    const inkRetarget = await js(`(() => {
+      const ink = document.querySelector('#nav-ink');
+      document.querySelector('[data-page=target]').click();
+      const first = ink.getAnimations().find(a => a.id === 'houyu-nav');
+      first.pause(); first.currentTime = 75;
+      const before = ink.getBoundingClientRect().top;
+      document.querySelector('[data-page=feishu]').click();
+      const second = ink.getAnimations().find(a => a.id === 'houyu-nav');
+      second.currentTime = 0;
+      return [ink.parentElement.dataset.page, first.playState, second.effect.getTiming().duration,
+        Math.abs(ink.getBoundingClientRect().top - before) < 1];
+    })()`);
+    assert.deepEqual(inkRetarget, ['feishu', 'idle', 200, true], 'a second navigation picks up the marker at its visible position');
     const rapid = await js(`(() => {
       const nav = page => document.querySelector('[data-page="' + page + '"]').click();
       nav('target'); nav('feishu');
@@ -599,22 +612,35 @@ async function checkMotion(window, state, paint, js) {
     await settle();
     contents.send('courtwatch:state', { ...state, checking: true });
     await paint();
-    assert.deepEqual(await js("[document.querySelector('#workspace').getAnimations({subtree:true}).some(a => a.id === 'houyu-reveal'), work.scrollTop]"),
-      [false, scroll], 'background scans do not restart motion or move the scroll position');
+    assert.deepEqual(await js(`[document.getAnimations().some(a => a.id.startsWith('houyu-')), work.scrollTop,
+      document.querySelector('#nav-ink').parentElement.getAttribute('aria-current')]`),
+      [false, scroll, 'page'], 'background scans keep the artwork, marker and scroll position still');
 
     await clickPage('target');
-    const saveAndReadDuration = () => js(`new Promise((resolve, reject) => {
+    const saveAndReadMotion = start => js(`new Promise((resolve, reject) => {
       const toast = document.querySelector('#toast');
       const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Target confirmation timed out')); }, 5000);
       const observer = new MutationObserver(() => {
         if (toast.hidden || toast.textContent !== '提醒目标已保存。') return;
         const effect = document.querySelector('#saved-place').getAnimations().find(a => a.id === 'houyu-reveal');
-        clearTimeout(timer); observer.disconnect(); resolve(effect?.effect.getTiming().duration ?? 0);
+        const range = document.querySelector('#band-range');
+        const motion = document.querySelector('#band-selection').getAnimations().find(a => a.id === 'houyu-range');
+        const xInMinutes = () => {
+          const track = range.ownerSVGElement.getBoundingClientRect();
+          return Math.round((range.getBoundingClientRect().left - track.left) * 1440 / track.width);
+        };
+        let from = null;
+        if (motion) {
+          motion.pause(); motion.currentTime = 0; from = xInMinutes(); motion.finish();
+        }
+        clearTimeout(timer); observer.disconnect(); resolve([effect?.effect.getTiming().duration ?? 0, from, xInMinutes()]);
       });
       observer.observe(toast, { attributes: true, childList: true, subtree: true });
+      document.querySelector('#target-start').value = ${JSON.stringify(start)};
       document.querySelector('#target-form').requestSubmit();
     })`);
-    assert.equal(await saveAndReadDuration(), 150, 'only an accepted save highlights the displayed time range');
+    assert.deepEqual(await saveAndReadMotion('16:30'), [150, 1080, 990], 'after a save the ruler travels from 18:00 to 16:30');
+    assert.deepEqual(await saveAndReadMotion('16:30'), [150, null, 990], 'saving the same time leaves the ruler at rest');
 
     contents.setZoomFactor(2);
     await paint();
@@ -639,7 +665,25 @@ async function checkMotion(window, state, paint, js) {
         document.activeElement.id, document.querySelector('#sidebar').checkVisibility(), work.inert];
     })()`), [0, 0, 0, 'selected-campus', false, false], 'reduced motion makes opening, navigation and dismissal immediate');
     await js("document.querySelector('#rail-toggle').click(); document.querySelector('[data-page=target]').click()");
-    assert.equal(await saveAndReadDuration(), 0, 'reduced motion still confirms the saved target without animating it');
+    assert.deepEqual(await saveAndReadMotion('15:30'), [0, null, 930], 'reduced motion places the ruler directly at the saved time');
+
+    contents.setZoomFactor(1);
+    await preference('no-preference');
+    const held = await js(`(() => {
+      document.querySelector('[data-page=monitor]').click();
+      window.heldMotion = document.getAnimations().filter(a => a.id.startsWith('houyu-'));
+      for (const effect of heldMotion) effect.pause();
+      return heldMotion.map(a => a.id).sort();
+    })()`);
+    assert.deepEqual(held, ['houyu-nav', 'houyu-reveal', 'houyu-serve']);
+    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [
+      { name: 'prefers-reduced-motion', value: 'reduce' }, { name: 'forced-colors', value: 'active' },
+    ] });
+    await paint();
+    assert.deepEqual(await js(`[heldMotion.every(a => a.playState === 'idle'), document.querySelector('#nav-ink').parentElement.dataset.page,
+      getComputedStyle(document.querySelector('#nav-ink')).backgroundColor !== 'rgba(0, 0, 0, 0)',
+      document.querySelector('.court-plan').checkVisibility()]`), [true, 'monitor', true, false],
+    'changing preferences mid-transition cancels all motion and leaves a visible selection in high contrast');
   } finally { contents.debugger.detach(); }
 }
 

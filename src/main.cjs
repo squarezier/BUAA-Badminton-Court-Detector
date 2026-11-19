@@ -64,6 +64,12 @@ mkdirSync(profile, { recursive: true, mode: 0o700 });
 app.setPath('userData', profile);
 app.setPath('sessionData', profile);
 app.enableSandbox();
+// Campus sign-in uses the school web page. Never volunteer a user's personal
+// or work TLS identity if a page or one of its resources asks for it.
+app.on('select-client-certificate', (event, _contents, _url, _certificates, choose) => {
+  event.preventDefault();
+  choose();
+});
 protocol.registerSchemesAsPrivileged([{ scheme: 'courtwatch', privileges: { standard: true, secure: true } }]);
 
 function onCampusLogin(value) {
@@ -282,17 +288,18 @@ async function openCampus(url, login) {
   }
 }
 
-async function dispatch(message, signal) {
+async function dispatch(buildNotice, signal) {
   if (!prefs.provider) return { kind: 'blocked', text: '请先连接飞书群机器人。' };
   if (sending || changingConnection) return { kind: 'retry', text: '另一条通知正在处理，下一轮会再检查。' };
   sending = true;
   try {
-    const connection = await prefs.readConnection();
+    let connection;
+    try { connection = await prefs.readConnection(); }
+    catch { return { kind: 'retry', retryAfterMs: 60000, text: '系统安全存储暂时无法解锁，下次核验到场地后重试。' }; }
+    const message = buildNotice();
+    if (!message) return { kind: 'skipped' };
     return await sendPush(connection, message, signal);
-  } catch {
-    return { kind: 'retry', retryAfterMs: 60000, text: '系统安全存储暂时无法解锁，下次核验到场地后重试。' };
-  }
-  finally { sending = false; }
+  } finally { sending = false; }
 }
 
 async function storePushConnection(connection, sessionOnly = false) {

@@ -24,6 +24,7 @@ Date.now = () => wallClock() + testClockOffset;
 const label = [...calendarDates(Date.now()).keys()][1];
 let rejectSignature = false;
 let vaultLocked = true;
+let beforeDecrypt;
 let pushRequests = 0;
 let visibleCourts = [1];
 let expired = false;
@@ -48,6 +49,7 @@ fs.writeFileSync(settings, JSON.stringify({
 }), { mode: 0o600 });
 safeStorage.isAsyncEncryptionAvailable = async () => !vaultLocked;
 safeStorage.decryptStringAsync = async value => {
+  if (beforeDecrypt) await beforeDecrypt();
   if (value.equals(feishuCiphertext)) return { result: JSON.stringify({ provider: 'feishu', webhook, secret }) };
   assert.deepEqual(value, legacyCiphertext);
   return { result: legacyToken };
@@ -118,6 +120,13 @@ function fail(error) { process.stderr.write(`${error.stack}\n`); app.exit(1); }
 
 async function run(win) {
   await mocked;
+  let defaultSelectionPrevented = false;
+  const selected = [];
+  app.emit('select-client-certificate', { preventDefault() { defaultSelectionPrevented = true; } },
+    win.webContents, new URL(campusOrigin), [{ issuerName: 'Test client identity' }], (...args) => { selected.push(args); });
+  assert.equal(defaultSelectionPrevented, true);
+  assert.deepEqual(selected, [[]], 'the app explicitly declines the OS client certificate');
+  cases++;
   if (process.platform === 'win32') {
     const file = path.join(profile, 'dpapi-fixture.json');
     const connection = { provider: 'feishu', webhook, secret };
@@ -428,6 +437,28 @@ async function run(win) {
     await assert.rejects(js(`window.courtWatch.saveTarget(${JSON.stringify(campus)}, ${JSON.stringify(target)})`));
   }
   assert.deepEqual((await state()).options.targets, targeted.options.targets);
+  cases++;
+
+  visibleCourts = [1, 2, 4];
+  wake();
+  await waitFor(view => !view.checking && view.slotCount === 6, 'a fresh sold baseline at both venues');
+  const beforeRetarget = pushRequests;
+  const unlock = Promise.withResolvers();
+  let waitingForVault = false;
+  beforeDecrypt = () => { waitingForVault = true; return unlock.promise; };
+  try {
+    visibleCourts = [1, 2, 3, 4];
+    wake();
+    await waitFor(() => waitingForVault, 'an eligible notice awaits the OS vault');
+    const later = { ...targeted.options.targets.xueyuanlu, start: '09:00', end: '10:00' };
+    await js(`window.courtWatch.saveTarget('xueyuanlu', ${JSON.stringify(later)})`);
+    await js(`window.courtWatch.saveTarget('xueyuanlu', ${JSON.stringify(targeted.options.targets.xueyuanlu)})`);
+  } finally {
+    beforeDecrypt = null;
+    unlock.resolve();
+  }
+  await waitFor(view => !view.checking && view.slotCount === 8, 'retired target is removed before the transport starts');
+  assert.equal(pushRequests, beforeRetarget, 'no HTTP request is sent for courts removed during unlock');
   cases++;
   await click('[data-page=monitor]');
   await click('#monitor-action');

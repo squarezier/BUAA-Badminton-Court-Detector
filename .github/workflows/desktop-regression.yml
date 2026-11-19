@@ -32,6 +32,8 @@ jobs:
           sources = subprocess.check_output(['git', 'ls-files', '-z', '--', 'src']).decode().rstrip('\0').split('\0')
           assert sorted(sources) == sorted(manifest['files']), 'Update the list of files in the release package'
           PY
+      - name: Check offline guide inputs and atomic package output
+        run: python3 -B test/package_inputs.py
       - name: Verify the Windows icon artwork matches the shared desktop artwork
         run: |
           python3 scripts/icon.py "$RUNNER_TEMP/houyu-icons"

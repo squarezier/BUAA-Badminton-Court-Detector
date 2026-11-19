@@ -17,10 +17,10 @@ const stamped = (...slots) => ({ dates: ['2026-11-18'], slots });
 const accepted = { kind: 'accepted', text: 'accepted' };
 const deferred = () => Promise.withResolvers();
 
-function setup(t, overrides = {}) {
+function setup(t, { dispatch = async () => accepted, ...overrides } = {}) {
   const monitor = new CourtMonitor({
     options: { campus: 'shahe', interval: 2 }, onChange() {}, now: () => baselineTime,
-    async checkVenue() { return stamped(); }, async dispatch() { return accepted; }, ...overrides,
+    async checkVenue() { return stamped(); }, dispatch: (buildNotice, signal) => dispatch(buildNotice(), signal), ...overrides,
   });
   t.after(() => monitor.stop());
   monitor.setAuth('signed-in');
@@ -481,6 +481,19 @@ test('notification transport retries pre-connection failures and treats a lost r
   }
   assert.equal((await sendWithFailure('ECONNRESET', 'read')).kind, 'unknown');
   assert.equal((await sendWithFailure('ECONNREFUSED', 'read')).kind, 'unknown');
+});
+
+test('dual-stack connection attempts are retried only when every address failed before sending', async () => {
+  const connection = feishuConnection({ webhook: 'https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-test-hook' });
+  const unreachable = Object.assign(new Error(), { code: 'ENETUNREACH', syscall: 'connect' });
+  const refused = Object.assign(new Error(), { code: 'ECONNREFUSED', syscall: 'connect' });
+  const readError = Object.assign(new Error(), { code: 'ECONNRESET', syscall: 'read' });
+  for (const [causes, kind] of [[[unreachable, refused], 'retry'], [[unreachable, readError], 'unknown'], [[], 'unknown']]) {
+    const result = await sendPush(connection, { feishuCard: {} }, undefined, async () => {
+      throw new TypeError('fetch failed', { cause: new AggregateError(causes) });
+    });
+    assert.equal(result.kind, kind);
+  }
 });
 
 test('a temporarily failed key rotation retains the readable ciphertext without caching the token', async t => {

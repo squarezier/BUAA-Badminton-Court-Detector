@@ -13,11 +13,21 @@ import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from zipfile import ZIP_DEFLATED, ZipFile
-from icon import windows_icon
+from icon import icon, png, windows_icon
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = json.loads((ROOT / 'package.json').read_text())
+
+
+def project_file(name):
+    relative = Path(name)
+    file = ROOT / relative
+    if relative.is_absolute() or '..' in relative.parts or file.resolve() != file or not file.is_file():
+        raise ValueError(f'Invalid distribution file: {name}')
+    return file
+
+
+MANIFEST = json.loads(project_file('package.json').read_text())
 RELEASE = MANIFEST['devDependencies']['electron']
 PRODUCT = MANIFEST['productName']
 TARGETS = ('darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64')
@@ -60,11 +70,8 @@ def stage_app(resources, stage):
     with tempfile.TemporaryDirectory(dir=stage) as source:
         app = Path(source)
         for name in ['package.json', *MANIFEST['files']]:
-            relative = Path(name)
-            original = ROOT / relative
-            if relative.is_absolute() or '..' in relative.parts or original.resolve() != original or not original.is_file():
-                raise ValueError(f'Invalid distribution file: {name}')
-            destination = app / relative
+            original = project_file(name)
+            destination = app / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(original, destination)
         digest = subprocess.check_output(['node', ROOT / 'scripts/seal-distribution.mjs',
@@ -80,10 +87,9 @@ def seal_runtime(executable, platform):
 
 
 def copy_guide(folder):
-    docs = ROOT / 'docs'
-    guide = docs / 'guide.md'
-    shutil.copyfile(guide, folder / '使用说明.md')
-    text = guide.read_text(encoding='utf-8')
+    guide = project_file('docs/guide.md').read_bytes()
+    text = guide.decode('utf-8')
+    (folder / '使用说明.md').write_bytes(guide)
     images = re.findall(r'!\[[^\]]*\]\(([^\s)]+)\)', text)
     images += re.findall(r'<img\b[^>]*?\bsrc=["\']([^"\']+)["\']', text, re.I)
     for url in set(images):
@@ -91,24 +97,26 @@ def copy_guide(folder):
         if parsed.scheme or parsed.netloc:
             continue
         path = Path(unquote(parsed.path))
-        image = docs / path
-        if path.is_absolute() or '..' in path.parts or path.suffix.lower() != '.png' or image.resolve() != image:
+        if path.is_absolute() or '..' in path.parts or path.suffix.lower() != '.png':
             raise ValueError(f'Invalid offline guide image: {url}')
+        image = project_file(Path('docs') / path)
         target = folder / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(image, target)
 
 
-def mac_icon(stage, resources):
-    source = ROOT / 'src' / 'ui' / 'icon.png'
+def mac_icon(resources):
     entries = []
-    for kind, size in ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64), (b'ic07', 128), (b'ic08', 256), (b'ic09', 512)):
-        raster = stage / f'icon-{size}.png'
-        subprocess.run(['sips', '-z', str(size), str(size), source, '--out', raster], check=True, stdout=subprocess.DEVNULL)
-        data = raster.read_bytes()
+    for kind, size in ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64), (b'ic07', 128),
+                       (b'ic08', 256), (b'ic09', 512), (b'ic10', 1024)):
+        data = desktop_icon(size)
         entries.append(kind + struct.pack('>I', len(data) + 8) + data)
     contents = b''.join(entries)
     (resources / 'Houyu.icns').write_bytes(b'icns' + struct.pack('>I', len(contents) + 8) + contents)
+
+
+def desktop_icon(size):
+    return project_file('src/ui/icon.png').read_bytes() if size == 512 else png(size, icon)
 
 
 def mac_package(runtime, stage, output):
@@ -118,7 +126,7 @@ def mac_package(runtime, stage, output):
     contents = bundle / 'Contents'
     resources = contents / 'Resources'
     integrity = stage_app(resources, stage)
-    mac_icon(stage, resources)
+    mac_icon(resources)
     plist_file = contents / 'Info.plist'
     with plist_file.open('rb') as file:
         config = plistlib.load(file)
@@ -173,16 +181,17 @@ def linux_package(runtime, stage, output):
     binary.symlink_to('/opt/houyu/houyu')
     desktop = root / 'usr/share/applications/houyu.desktop'
     desktop.parent.mkdir(parents=True)
-    shutil.copy(ROOT / 'scripts/linux/houyu.desktop', desktop)
-    icon = root / 'usr/share/icons/hicolor/512x512/apps/houyu.png'
-    icon.parent.mkdir(parents=True)
-    shutil.copy(ROOT / 'src/ui/icon.png', icon)
+    shutil.copy(project_file('scripts/linux/houyu.desktop'), desktop)
+    for size in (16, 24, 32, 48, 64, 128, 256, 512):
+        target = root / f'usr/share/icons/hicolor/{size}x{size}/apps/houyu.png'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(desktop_icon(size))
     guide = root / 'usr/share/doc/houyu'
     guide.mkdir(parents=True)
     copy_guide(guide)
     control = root / 'DEBIAN/control'
     control.parent.mkdir()
-    template = (ROOT / 'scripts/linux/control.in').read_text()
+    template = project_file('scripts/linux/control.in').read_text()
     control.write_text(template.replace('@VERSION@', MANIFEST['version']))
     run('dpkg-deb', '--root-owner-group', '-Zxz', '-z4', '--build', root, output)
 
@@ -198,15 +207,19 @@ def main():
         subprocess.run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'], cwd=ROOT, check=True)
     runtime = verified_runtime(args.runtime.resolve(), args.target)
     args.staging.resolve().mkdir(parents=True, exist_ok=True)
-    output = args.output.resolve()
-    with tempfile.TemporaryDirectory(dir=args.staging.resolve()) as directory:
+    output = args.output.parent.resolve() / args.output.name
+    if output.is_symlink():
+        raise ValueError('The release output must not be a symbolic link')
+    with tempfile.TemporaryDirectory(dir=args.staging.resolve()) as directory, tempfile.TemporaryDirectory(dir=output.parent) as pending:
         stage = Path(directory)
+        archive = Path(pending) / output.name
         if args.target.startswith('darwin'):
-            mac_package(runtime, stage, output)
+            mac_package(runtime, stage, archive)
         elif args.target == 'win32-x64':
-            windows_package(runtime, stage, output)
+            windows_package(runtime, stage, archive)
         else:
-            linux_package(runtime, stage, output)
+            linux_package(runtime, stage, archive)
+        archive.replace(output)
 
 
 if __name__ == '__main__':

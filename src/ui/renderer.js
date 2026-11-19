@@ -68,21 +68,40 @@ const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const pageScroll = new Map();
 let activePage = 'monitor';
 
-function stopReveals(root) {
+function stopMotion(root) {
   for (const animation of root.getAnimations({ subtree: true })) {
-    if (animation.id === 'houyu-reveal') animation.cancel();
+    if (animation.id.startsWith('houyu-')) animation.cancel();
   }
 }
 
-function reveal(element) {
+function playMotion(element, id, frames, duration) {
   if (reducedMotion.matches || !element.checkVisibility()) return;
-  stopReveals(element);
-  element.animate([{ opacity: .84, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }],
-    { id: 'houyu-reveal', duration: 150, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  for (const animation of element.getAnimations()) {
+    if (animation.id === id) animation.cancel();
+  }
+  element.animate(frames, { id, duration, easing: 'cubic-bezier(.2,.7,.3,1)' });
+}
+
+function reveal(element) {
+  playMotion(element, 'houyu-reveal', [{ opacity: .84, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], 150);
+}
+
+function moveNavInk(button) {
+  const ink = get('nav-ink');
+  if (ink.parentElement === button) return;
+  const slide = !reducedMotion.matches && !compactLayout.matches;
+  const from = slide ? ink.getBoundingClientRect().top : 0;
+  stopMotion(ink);
+  button.prepend(ink);
+  if (!slide) return;
+  const offset = from - ink.getBoundingClientRect().top;
+  if (Math.abs(offset) > .5) {
+    playMotion(ink, 'houyu-nav', [{ transform: `translateY(${offset}px)` }, { transform: 'none' }], 200);
+  }
 }
 
 reducedMotion.addEventListener('change', () => {
-  if (reducedMotion.matches) stopReveals(get('workspace'));
+  if (reducedMotion.matches) stopMotion(document.documentElement);
 });
 
 function setSidebar(open) {
@@ -101,7 +120,7 @@ function showPage(page) {
   const changed = page !== activePage;
   if (changed) {
     pageScroll.set(activePage, workspace.scrollTop);
-    stopReveals(get(`page-${activePage}`));
+    stopMotion(get(`page-${activePage}`));
   }
   setSidebar(false);
   if (page !== 'feishu') {
@@ -113,7 +132,10 @@ function showPage(page) {
   for (const nav of document.querySelectorAll('[data-page]')) {
     const selected = nav.dataset.page === page;
     nav.classList.toggle('current', selected);
-    if (selected) nav.setAttribute('aria-current', 'page');
+    if (selected) {
+      nav.setAttribute('aria-current', 'page');
+      moveNavInk(nav);
+    }
     else nav.removeAttribute('aria-current');
     get(`page-${nav.dataset.page}`).hidden = !selected;
   }
@@ -125,6 +147,9 @@ function showPage(page) {
     activePage = page;
     workspace.scrollTop = pageScroll.get(page) ?? 0;
     reveal(panel);
+    if (page === 'monitor') {
+      playMotion(get('serve-arc'), 'houyu-serve', [{ strokeDashoffset: '1' }, { strokeDashoffset: '0' }], 320);
+    }
   }
 }
 
@@ -167,9 +192,11 @@ function renderTarget(options, venues, now) {
   const minute = clock => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3));
   const start = target ? minute(target.start) : 0;
   const end = target ? minute(target.end) : target === null ? 0 : 1440;
-  get('band-range').setAttribute('x', String(start));
-  get('band-range').setAttribute('width', String(end - start));
-  get('band-ends').setAttribute('d', `M${start} 3v17 M${end} 3v17`);
+  if (version !== editorVersion) {
+    get('band-range').setAttribute('x', String(start));
+    get('band-range').setAttribute('width', String(end - start));
+    get('band-ends').setAttribute('d', `M${start} 3v17 M${end} 3v17`);
+  }
   get('day-band').hidden = target === null;
   const duration = end - start;
   const parts = [Math.floor(duration / 60) ? `${Math.floor(duration / 60)} 小时` : '', duration % 60 ? `${duration % 60} 分钟` : ''].filter(Boolean);
@@ -223,6 +250,28 @@ function validateTargetRange(focus = false) {
   return !field;
 }
 
+function visibleBand() {
+  const band = get('band-range');
+  if (reducedMotion.matches || !band.checkVisibility()) return null;
+  const track = band.ownerSVGElement.getBoundingClientRect();
+  const rect = band.getBoundingClientRect();
+  if (!track.width || !rect.width) return null;
+  const units = band.ownerSVGElement.viewBox.baseVal.width / track.width;
+  return { start: (rect.left - track.left) * units, width: rect.width * units };
+}
+
+function settleBand(previous) {
+  if (!previous) return;
+  const range = get('band-range');
+  const start = range.x.baseVal.value;
+  const width = range.width.baseVal.value;
+  if (!width || (Math.abs(start - previous.start) < .5 && Math.abs(width - previous.width) < .5)) return;
+  const scale = previous.width / width;
+  const offset = previous.start - start * scale;
+  playMotion(get('band-selection'), 'houyu-range',
+    [{ transform: `translateX(${offset}px) scaleX(${scale})` }, { transform: 'none' }], 240);
+}
+
 function submitTarget(event) {
   event.preventDefault();
   if (!current || !validateTargetRange(true)) return;
@@ -234,9 +283,13 @@ function submitTarget(event) {
   const target = { date, start, end };
   void act(async () => {
     try {
+      const previous = visibleBand();
       await app.saveTarget(campus, target);
       error.hidden = true;
-      if (activePage === 'target' && current.options.campus === campus) reveal(get('saved-place'));
+      if (activePage === 'target' && current.options.campus === campus) {
+        settleBand(previous);
+        reveal(get('saved-place'));
+      }
       showToast('提醒目标已保存。');
     } catch (err) { text('target-error', err.message || '目标保存失败，请重试。'); error.hidden = false; }
   });

@@ -66,11 +66,13 @@ h2 { font-size: 17px; line-height: 1.4; font-weight: 650; }
 .brand strong { color: var(--navy); font-size: 24px; font-weight: 650; letter-spacing: .07em; }
 .navigation { display: grid; gap: 6px; }
 .nav {
+  position: relative;
   gap: 11px; min-height: 38px; width: 100%; padding: 6px 12px; border: 0; border-radius: 8px; text-align: left;
   background: transparent; color: var(--muted); font-size: 14px; white-space: nowrap;
 }
 .nav:hover { background: var(--neutral-hover); }
-.nav.current { color: var(--selected-ink); background: var(--selected); font-weight: 660; box-shadow: inset 3px 0 var(--blue); }
+.nav.current { color: var(--selected-ink); background: var(--selected); font-weight: 660; }
+#nav-ink { position: absolute; z-index: 1; pointer-events: none; inset-inline-start: 1px; top: calc(50% - 8px); width: 3px; height: 16px; border-radius: 3px; background: currentColor; }
 .nav-icon { display: inline-block; position: relative; flex: none; width: 17px; height: 14px; border: 1.5px solid currentColor; }
 .court-icon { border-radius: 2px; }
 .court-icon::before, .court-icon::after, .target-icon::before, .chat-icon::after { content: ''; position: absolute; }
@@ -83,8 +85,8 @@ h2 { font-size: 17px; line-height: 1.4; font-weight: 650; }
 .nav .court-icon { color: var(--blue); }
 .nav .target-icon { color: var(--clay-ink); }
 .nav .chat-icon { color: var(--plum-ink); }
-.nav[data-page=target].current { background: var(--clay-paper); color: var(--clay-ink); box-shadow: inset 3px 0 currentColor; }
-.nav[data-page=feishu].current { background: var(--plum-paper); color: var(--plum-ink); box-shadow: inset 3px 0 currentColor; }
+.nav[data-page=target].current { background: var(--clay-paper); color: var(--clay-ink); }
+.nav[data-page=feishu].current { background: var(--plum-paper); color: var(--plum-ink); }
 .nav.current .chat-icon::after { background: var(--plum-paper); }
 .rail-foot { margin-top: auto; padding-top: 24px; }
 .account { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 7px; border-top: 1px solid var(--line); padding: 12px 2px 0; font-size: 12px; }
@@ -138,14 +140,11 @@ h2 { font-size: 17px; line-height: 1.4; font-weight: 650; }
 .venue-heading p { margin-top: 4px; }
 .availability-total { display: flex; flex-direction: column-reverse; align-items: end; gap: 3px; }
 .availability-total dd { font: 550 clamp(38px, 4.7vw, 56px)/1 var(--numeric); letter-spacing: -.06em; font-variant-numeric: tabular-nums; }
-.court-plan { position: absolute; z-index: -1; pointer-events: none; width: 29%; height: 138%; top: -20%; left: 52%; transform: rotate(19deg); border: 1px solid; color: #d2e2df40; }
-.court-plan::before, .court-plan::after, .court-plan i, .court-plan b { content: ''; position: absolute; }
-.court-plan::before { inset: 9% 0; border-block: 1px solid; }
-.court-plan::after { inset: 0 8%; border-inline: 1px solid; }
-.court-plan i { inset: 0 34%; border-inline: 1px solid; }
-.court-plan b { inset: 0 50% 0 0; border-right: 1px solid; }
-.court-plan b::before, .court-plan b::after { content: ''; position: absolute; top: 50%; width: 68%; border-top: 1px solid; }
-.court-plan b::after { left: 132%; }
+.court-plan { position: absolute; z-index: -1; pointer-events: none; width: 31%; height: 154%; top: -27%; left: 47%; transform: rotate(19deg); fill: none; }
+.court-plan > * { vector-effect: non-scaling-stroke; }
+.court-lines { stroke: #d2e2df45; }
+#serve-arc { stroke: #ece1bd94; stroke-dasharray: 1; }
+.serve-mark { fill: #e7dcbf; stroke: #3d5a70; }
 .monitor-toolbar { display: grid; grid-template-columns: minmax(0,1fr) auto; grid-template-rows: auto auto; align-content: center; align-items: center; gap: 8px 14px; padding: 12px clamp(15px, 2.4vw, 34px); }
 .status { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .monitor-toolbar #monitor-state { color: var(--ink); font-size: 14px; font-weight: 650; }
@@ -257,6 +256,7 @@ input::placeholder { color: var(--muted); }
 .day-band svg { display: block; width: 100%; height: 24px; }
 .band-base { fill: var(--control-border); }
 #band-range { fill: var(--clay-ink); }
+#band-selection { transform-box: view-box; transform-origin: 0 0; }
 .band-tick, #band-ends { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
 #band-ends { stroke: var(--clay-ink); stroke-width: 2; }
 .day-band div { position: relative; display: flex; justify-content: space-between; color: var(--muted); font: 12px var(--numeric); }
@@ -365,6 +365,10 @@ input::placeholder { color: var(--muted); }
 }
 @media (forced-colors: active) {
   .court-number, .venue-link, .date-filter button[aria-pressed=true], .choice input:checked + span { border: 1px solid CanvasText; }
-  .nav.current, .in-target .slot-time, .target-summary:not([data-state=all]) { border-inline-start: 3px solid Highlight; }
+  #nav-ink { background: Highlight; forced-color-adjust: none; }
+  .court-plan { display: none; }
+  #band-range { fill: Highlight; }
+  #band-ends { stroke: Highlight; }
+  .in-target .slot-time, .target-summary:not([data-state=all]) { border-inline-start: 3px solid Highlight; }
   :focus-visible, .choice input:focus-visible + span { outline: 2px solid Highlight; }
 }

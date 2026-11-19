@@ -24,7 +24,7 @@ function rig(t, dispatch, target = rule) {
   let booked = [];
   const options = { campus: 'xueyuanlu', interval: 2, targets: { xueyuanlu: target } };
   const monitor = new CourtMonitor({
-    options, now: () => now, onChange() {}, dispatch,
+    options, now: () => now, onChange() {}, dispatch: (buildNotice, signal) => dispatch(buildNotice(), signal),
     async checkVenue(id) {
       return { dates: [day], slots: available.filter(s => s.venue === id), reserved: booked.filter(s => s.venue === id) };
     },
@@ -151,6 +151,41 @@ test('pending notifications follow live edits and expiry never falls back to all
   await r.sample([later]);
   assert.equal(messages.length, 1);
   assert.equal(r.monitor.state().slotCount, 1);
+});
+
+test('the final card honors target edits and court start times while waiting for the OS vault', async t => {
+  const courts = [slot(), slot({ court: 18, start: '19:00', end: '20:00' })];
+  for (const scenario of ['narrow', 'start', 'all-expired']) {
+    const r = rig(t, async () => accepted);
+    const waiting = Promise.withResolvers();
+    const unlocked = Promise.withResolvers();
+    let card = null;
+    r.monitor.dispatch = async buildNotice => {
+      waiting.resolve();
+      await unlocked.promise;
+      card = buildNotice();
+      return card ? accepted : { kind: 'skipped' };
+    };
+    await r.sample([], courts);
+    const poll = r.sample(courts);
+    await waiting.promise;
+    if (scenario === 'narrow') {
+      r.setRule({ ...rule, start: '19:00' });
+      r.setRule(rule);
+    } else {
+      r.setTime(Date.parse(day + (scenario === 'start' ? 'T18:00:00+08:00' : 'T19:00:00+08:00')));
+    }
+    unlocked.resolve();
+    await poll;
+    if (scenario === 'all-expired') {
+      assert.equal(card, null);
+      assert.equal(r.monitor.state().delivery.status, 'ready');
+    } else {
+      assert.match(card.markdown, /18号/);
+      assert.doesNotMatch(card.markdown, /19号/);
+    }
+    assert.equal(r.monitor.pending.size, 0);
+  }
 });
 
 test('all reopened groups reach Feishu across cards, without repeating an accepted card after a rate limit', async t => {

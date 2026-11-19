@@ -78,13 +78,35 @@ def blend(a, b, amount):
 
 
 def icon(x, y, px):
-    alpha = opacity(rounded_distance(x, y, 12, 12, 500, 500, 114), px)
-    court = min(rounded_distance(x, y, *bounds, 9) for bounds in COURT_LINES)
-    color = blend((73, 102, 126), (177, 194, 195), opacity(court, px) / 255)
+    face_distance = rounded_distance(x, y, 41, 34, 471, 464, 96)
+    face = opacity(face_distance, px) / 255
+    # Two short, downward shadows have room to fade inside the transparent canvas.
+    if face < 1:
+        cast = rounded_distance(x, y - 9, 41, 34, 471, 464, 96)
+        contact = rounded_distance(x, y - 4, 41, 34, 471, 464, 96)
+        soft = .19 * math.erfc(cast / math.hypot(12, px / 2))
+        tight = .12 * math.erfc(contact / math.hypot(4, px / 2))
+        shadow = 1 - (1 - soft) * (1 - tight)
+        alpha = face + shadow * (1 - face)
+        if not round(alpha * 255):
+            return (0, 0, 0, 0)
+    else:
+        alpha = 1
+
+    light = max(0, min(1, (.35 * x + .65 * y - 37) / 430))
+    color = blend((102, 132, 151), (55, 83, 106), light)
+    if px < 16:
+        court = min(rounded_distance(x, y, *bounds, 9) for bounds in COURT_LINES)
+        color = blend(color, (179, 198, 199), .72 * opacity(court, px) / 255)
+    # A small offset underneath the ivory feathers gives the mark a printed relief.
+    under = max(mark(x, y - 4, max(px, 7))) / 255
+    color = blend(color, (37, 59, 77), .36 * under)
     feathers, cork = mark(x, y, px)
-    color = blend(color, (249, 247, 239), feathers / 255)
-    color = blend(color, (220, 204, 188), cork / 255)
-    return (*color, alpha)
+    paper = blend((255, 253, 243), (234, 232, 217), light)
+    color = blend(color, paper, feathers / 255)
+    color = blend(color, (225, 201, 172), cork / 255)
+    color = blend((27, 40, 52), color, face / alpha)
+    return (*color, round(alpha * 255))
 
 
 def tray(x, y, px):

@@ -139,11 +139,17 @@ function retryDelay(header, fallback) {
   return Number.isSafeInteger(duration) && duration > 0 ? duration : fallback;
 }
 
-function couldNotConnect(error) {
-  const cause = error?.cause;
+function failedBeforeConnect(cause) {
   if (cause?.code === 'UND_ERR_CONNECT_TIMEOUT') return true;
   if (cause?.syscall === 'getaddrinfo') return ['EAI_AGAIN', 'ENOTFOUND'].includes(cause.code);
   return cause?.syscall === 'connect' && ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(cause.code);
+}
+
+function couldNotConnect(error) {
+  const cause = error?.cause;
+  // Node can report separate IPv4 and IPv6 attempts for the same request.
+  if (cause instanceof AggregateError) return cause.errors.length > 0 && cause.errors.every(failedBeforeConnect);
+  return failedBeforeConnect(cause);
 }
 
 function serverChanResult(code) {
@@ -163,7 +169,8 @@ function feishuResult(response, data) {
     return { kind: 'retry', retryAfterMs, text: '飞书暂时限流，将延后重试。' };
   }
   if ((Number.isSafeInteger(code) && code !== 0) || [400, 401, 403, 404, 410].includes(response.status)) {
-    return { kind: 'blocked', text: FEISHU_ERRORS[code] ?? '飞书拒绝发送，请核对 Webhook 和机器人的安全设置。' };
+    const text = Number.isSafeInteger(code) ? FEISHU_ERRORS[code] : undefined;
+    return { kind: 'blocked', text: text ?? '飞书拒绝发送，请核对 Webhook 和机器人的安全设置。' };
   }
   return { kind: 'unknown', text: '飞书返回异常，送达状态待确认。' };
 }

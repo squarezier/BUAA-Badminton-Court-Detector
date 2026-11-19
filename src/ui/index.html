@@ -17,7 +17,7 @@
     <aside class="rail" id="sidebar" aria-label="导航与监控设置">
       <div class="brand"><img src="icon.png" alt="" width="44" height="44"><strong>候羽</strong></div>
       <nav aria-label="应用页面" class="navigation">
-        <button type="button" class="nav current" data-page="monitor" aria-current="page"><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
+        <button type="button" class="nav current" data-page="monitor" aria-current="page"><i id="nav-ink" aria-hidden="true"></i><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
         <button type="button" class="nav" data-page="target"><span class="nav-icon target-icon" aria-hidden="true"></span>提醒目标</button>
         <button type="button" class="nav" data-page="feishu"><span class="nav-icon chat-icon" aria-hidden="true"></span>飞书通知</button>
       </nav>
@@ -51,7 +51,11 @@
       <section id="page-monitor" aria-labelledby="selected-campus">
         <header class="monitor-head">
           <div class="venue-summary">
-            <div class="court-plan" aria-hidden="true"><i></i><b></b></div>
+            <svg class="court-plan" viewBox="-7 -3 75 140" aria-hidden="true" focusable="false">
+              <path class="court-lines" d="M0 0h61v134H0z M4.6 0v134 M56.4 0v134 M0 7.6h61 M0 47.2h61 M0 67h61 M0 86.8h61 M0 126.4h61 M30.5 0v47.2 M30.5 86.8V134"></path>
+              <path id="serve-arc" pathLength="1" d="M13 99C9 78 23 48 47 42"></path>
+              <circle class="serve-mark" cx="13" cy="99" r="1.5"></circle><circle class="serve-mark" cx="47" cy="42" r="2.2"></circle>
+            </svg>
             <div class="venue-heading"><h1 id="selected-campus">沙河校区</h1><p id="selected-venues">综合馆</p></div>
             <dl class="availability-total"><dt>校区可约场次</dt><dd id="count">—</dd></dl>
           </div>
@@ -110,8 +114,10 @@
                 <defs><pattern id="hours" width="60" height="24" patternUnits="userSpaceOnUse"><path d="M0 12v5" class="band-tick"></path></pattern></defs>
                 <rect class="band-base" x="0" y="10" width="1440" height="5"></rect><rect x="0" y="0" width="1440" height="24" fill="url(#hours)"></rect>
                 <path d="M0 9v12 M360 9v12 M720 9v12 M1080 9v12 M1440 9v12" class="band-tick"></path>
-                <rect id="band-range" x="0" y="7" width="1440" height="9"></rect>
-                <path id="band-ends" d="M0 3v17 M1440 3v17"></path>
+                <g id="band-selection">
+                  <rect id="band-range" x="0" y="7" width="1440" height="9"></rect>
+                  <path id="band-ends" d="M0 3v17 M1440 3v17"></path>
+                </g>
               </svg>
               <div aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
             </div>
