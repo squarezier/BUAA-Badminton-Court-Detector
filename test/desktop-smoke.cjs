@@ -336,10 +336,17 @@ async function run() {
   assert.equal(await readable(), true, 'action, navigation, venue names and available court numbers maintain readable contrast');
   const logoWidth = await window.webContents.executeJavaScript("(async () => { const logo = document.querySelector('.brand img'); await logo.decode(); return logo.naturalWidth; })()");
   assert.equal(logoWidth, 512);
-  const toolsBelowResults = () => js("document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom - 1");
-  assert.equal(await toolsBelowResults(), true);
-  assert.ok(await js("document.querySelector('table').getBoundingClientRect().width >= innerWidth * .84"),
-    'the court agenda has at least 84% of the desktop width');
+  const usesSidebar = () => js(`(() => {
+    const box = selector => document.querySelector(selector).getBoundingClientRect();
+    const items = [...document.querySelectorAll('.nav, #campus-field, #interval-form, .account')];
+    return box('#sidebar').right <= box('#workspace').left && items.every((item, index) => {
+      const rect = item.getBoundingClientRect();
+      return rect.width > 0 && rect.right <= box('#sidebar').right && (!index || rect.top >= items[index - 1].getBoundingClientRect().bottom);
+    });
+  })()`);
+  assert.equal(await usesSidebar(), true, 'navigation, campus, interval and account form one vertical sidebar beside the agenda');
+  assert.ok(await js("document.querySelector('table').getBoundingClientRect().width >= document.querySelector('#workspace').clientWidth * .85"),
+    'the timetable retains at least 85% of the available workspace');
   assert.ok(await js("parseFloat(getComputedStyle(document.querySelector('.court-number')).fontSize) >= 15"));
   assert.equal(await window.webContents.executeJavaScript("getComputedStyle(document.querySelector('input[name=campus]:disabled')).opacity"), '0',
     'a disabled native radio does not cover the selected campus label');
@@ -467,15 +474,21 @@ async function run() {
   await paint();
   assert.equal(await targetStripFits(), true, 'the target date, hours, campus scope and edit link remain readable at double zoom');
   assert.equal(await js(`document.documentElement.scrollWidth <= innerWidth &&
-    [...document.querySelectorAll('.navigation button, #account-action')].every(el => {
+    document.querySelector('#rail-toggle').checkVisibility() && !document.querySelector('#sidebar').checkVisibility() &&
+    document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth
+    && document.querySelector('.table-wrap').scrollWidth <= document.querySelector('.table-wrap').clientWidth`),
+    true, 'at double zoom the agenda takes the full width and the navigation toggle remains visible');
+  await js("document.querySelector('#rail-toggle').click()");
+  assert.equal(await js(`document.querySelector('#workspace').inert &&
+    [...document.querySelectorAll('.navigation button, #interval, #account-action')].every(el => {
       const box = el.getBoundingClientRect();
       return box.width > 0 && box.left >= 0 && box.right <= innerWidth;
-    }) && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth
-    && document.querySelector('.table-wrap').scrollWidth <= document.querySelector('.table-wrap').clientWidth`),
-    true, 'doubling text and UI size keeps Chinese navigation, account and schedule available');
+    })`), true, 'the compact vertical menu exposes each page, the interval and the account');
+  await js("document.querySelector('.nav.current').focus(); document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  assert.equal(await js("!document.querySelector('#workspace').inert && document.activeElement.id === 'rail-toggle'"), true);
   window.webContents.setZoomFactor(1);
   await paint();
-  assert.equal(await toolsBelowResults(), true, 'monitoring tools stay below the agenda at the minimum width');
+  assert.equal(await usesSidebar(), true, 'the normal minimum desktop width keeps the vertical settings sidebar');
   const crowdedRow = { ...state.rows[0], courts: Array.from({ length: 120 }, (_, i) => i + 1) };
   window.webContents.send('courtwatch:state', { ...state, rows: [crowdedRow] });
   await paint();

@@ -63,7 +63,16 @@ function clearConnectionInputs() {
   get('feishu-secret').value = '';
 }
 
+const compactLayout = matchMedia('(max-width: 660px)');
+function setSidebar(open) {
+  const opened = compactLayout.matches && open;
+  get('rail-toggle').setAttribute('aria-expanded', String(opened));
+  get('sidebar').classList.toggle('open', opened);
+  get('workspace').inert = opened;
+}
+
 function showPage(page) {
+  setSidebar(false);
   if (page !== 'feishu') {
     clearConnectionInputs();
     replacingConnection = false;
@@ -458,6 +467,19 @@ function updateOptions(patch) {
 if (!app) {
   showToast('桌面服务未启动。请从应用程序重新打开。');
 } else {
+  const toggle = get('rail-toggle');
+  toggle.addEventListener('click', () => setSidebar(toggle.getAttribute('aria-expanded') !== 'true'));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !get('workspace').inert) return;
+    setSidebar(false);
+    toggle.focus();
+  });
+  compactLayout.addEventListener('change', () => {
+    const active = document.activeElement;
+    setSidebar(false);
+    if (compactLayout.matches && get('sidebar').contains(active)) toggle.focus();
+    else if (!compactLayout.matches && active === toggle) document.querySelector('.nav.current').focus();
+  });
   for (const nav of document.querySelectorAll('[data-page]')) nav.addEventListener('click', () => showPage(nav.dataset.page));
   get('account-action').addEventListener('click', () => act(() => current?.auth === 'signed-in' ? app.logOut() : app.login()));
   get('monitor-action').addEventListener('click', () => act(() => current?.running ? app.pause() : app.start()));

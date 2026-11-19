@@ -10,22 +10,44 @@
 <body>
   <div class="shell">
     <div class="window-bar" aria-hidden="true"></div>
-    <header class="rail">
+    <div class="compact-bar">
+      <strong>候羽</strong>
+      <button type="button" id="rail-toggle" aria-expanded="false" aria-controls="sidebar"><span class="menu-icon" aria-hidden="true"></span>导航与设置</button>
+    </div>
+    <aside class="rail" id="sidebar" aria-label="导航与监控设置">
       <div class="brand"><img src="icon.png" alt="" width="44" height="44"><strong>候羽</strong></div>
       <nav aria-label="应用页面" class="navigation">
         <button type="button" class="nav current" data-page="monitor" aria-current="page"><span class="nav-icon court-icon" aria-hidden="true"></span>场地监控</button>
         <button type="button" class="nav" data-page="target"><span class="nav-icon target-icon" aria-hidden="true"></span>提醒目标</button>
         <button type="button" class="nav" data-page="feishu"><span class="nav-icon chat-icon" aria-hidden="true"></span>飞书通知</button>
       </nav>
+      <section class="controls" aria-label="监控设置">
+        <fieldset id="campus-field"><legend>监控校区</legend>
+          <div class="campus-options">
+            <label class="choice"><input type="radio" name="campus" value="shahe" checked><span>沙河</span></label>
+            <label class="choice"><input type="radio" name="campus" value="xueyuanlu"><span>学院路</span></label>
+          </div>
+        </fieldset>
+        <form id="interval-form">
+          <label for="interval">检查间隔</label>
+          <div class="interval-entry">
+            <div class="unit-field">
+              <input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required>
+              <select id="interval-unit" aria-label="检查间隔单位"><option value="minutes">分钟</option><option value="seconds">秒</option></select>
+            </div>
+            <button class="button" type="submit" id="save-interval">保存</button>
+          </div>
+        </form>
+      </section>
       <div class="rail-foot">
         <section class="account" aria-label="北航账号">
           <p class="account-state"><i id="account-dot" class="dot" aria-hidden="true"></i><span id="account-state">尚未登录</span></p>
           <button id="account-action" class="quiet" type="button">登录北航</button>
         </section>
       </div>
-    </header>
+    </aside>
 
-    <main class="workspace">
+    <main class="workspace" id="workspace">
       <section id="page-monitor" aria-labelledby="selected-campus">
         <header class="monitor-head">
           <div class="venue-summary">
@@ -63,26 +85,6 @@
             </div>
             <div class="booking-links" id="booking-links" aria-label="北航官方预约入口"></div>
           </section>
-          <aside class="inspector" aria-label="监控设置">
-            <section class="controls">
-              <fieldset id="campus-field"><legend>监控校区</legend>
-                <div class="campus-options">
-                  <label class="choice"><input type="radio" name="campus" value="shahe" checked><span>沙河</span></label>
-                  <label class="choice"><input type="radio" name="campus" value="xueyuanlu"><span>学院路</span></label>
-                </div>
-              </fieldset>
-              <form id="interval-form">
-                <label for="interval">检查间隔</label>
-                <div class="interval-entry">
-                  <div class="unit-field">
-                    <input type="number" id="interval" min="1" max="1440" step="1" value="2" inputmode="numeric" required>
-                    <select id="interval-unit" aria-label="检查间隔单位"><option value="minutes">分钟</option><option value="seconds">秒</option></select>
-                  </div>
-                  <button class="button" type="submit" id="save-interval">保存</button>
-                </div>
-              </form>
-            </section>
-          </aside>
         </div>
       </section>
 
