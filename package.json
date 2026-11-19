@@ -1,7 +1,7 @@
 {
   "name": "buaa-badminton-watch",
   "productName": "候羽",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "description": "北航两校区羽毛球场地余量监控与飞书提醒",
   "main": "src/main.cjs",

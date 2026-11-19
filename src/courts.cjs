@@ -7,10 +7,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const BOOKING_RELEASE_OFFSET = 7 * 60 * 60 * 1000;
 const MIN_INTERVAL = 1 / 60;
 const MAX_INTERVAL = 1440;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const VENUES = Object.freeze({
   '38': { id: '38', campus: 'xueyuanlu', label: '体育馆主馆' },
-  '39': { id: '39', campus: 'xueyuanlu', label: '体育馆训练馆（副馆）' },
-  '57': { id: '57', campus: 'shahe', label: '综合馆' },
+  '39': { id: '39', campus: 'xueyuanlu', label: '体育馆训练馆（副馆）', paidRefundLeadMs: THREE_HOURS_MS },
+  '57': { id: '57', campus: 'shahe', label: '综合馆', paidRefundLeadMs: THREE_HOURS_MS },
 });
 const CAMPUSES = Object.freeze({
   shahe: { label: '沙河校区', venues: ['57'] },
@@ -151,7 +152,7 @@ function validatedSnapshot(id, days, started, unread = []) {
     if (!date || dates.has(date) || unreadDates.has(date) || !['layout', 'colors'].includes(day.error)) throw new Error('官网核验日期异常。');
     unreadDates.add(date);
   }
-  return { dates: [...dates].sort(), unreadDates: [...unreadDates].sort(), slots: [...slots.values()], reserved: [...reserved.values()] };
+  return { started, dates: [...dates].sort(), unreadDates: [...unreadDates].sort(), slots: [...slots.values()], reserved: [...reserved.values()] };
 }
 
 function groupSlots(slots) {

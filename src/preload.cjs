@@ -9,13 +9,18 @@ function invoke(action, value) {
   });
 }
 
-contextBridge.exposeInMainWorld('courtWatch', Object.freeze({
+if (process.isMainFrame && location.href === 'courtwatch://app/index.html') contextBridge.exposeInMainWorld('courtWatch', Object.freeze({
   platform: process.platform,
   state: () => invoke('state'),
   onState: callback => {
     const receive = (_event, state) => callback(state);
     ipcRenderer.on('courtwatch:state', receive);
     return () => ipcRenderer.removeListener('courtwatch:state', receive);
+  },
+  onClearDraft: callback => {
+    const receive = () => callback();
+    ipcRenderer.on('courtwatch:clear-draft', receive);
+    return () => ipcRenderer.removeListener('courtwatch:clear-draft', receive);
   },
   login: () => invoke('login'),
   logOut: () => invoke('log-out'),

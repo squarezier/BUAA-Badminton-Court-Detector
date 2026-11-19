@@ -18,7 +18,6 @@
         <button type="button" class="nav" data-page="feishu"><span class="nav-icon chat-icon" aria-hidden="true"></span>飞书通知</button>
       </nav>
       <div class="rail-foot">
-        <div class="court-plan" aria-hidden="true"><i></i><b></b></div>
         <section class="account" aria-label="北航账号">
           <p class="account-state"><i id="account-dot" class="dot" aria-hidden="true"></i><span id="account-state">尚未登录</span></p>
           <button id="account-action" class="quiet" type="button">登录北航</button>
@@ -28,18 +27,21 @@
 
     <main class="workspace">
       <section id="page-monitor" aria-labelledby="selected-campus">
-        <header class="page-head">
-          <div><h1 id="selected-campus">沙河校区</h1><p id="selected-venues">综合馆</p></div>
-          <button class="button primary" id="monitor-action" type="button" disabled><span class="play-icon" aria-hidden="true"></span><span id="monitor-action-label">开始监控</span></button>
+        <header class="monitor-head">
+          <div class="venue-summary">
+            <div class="court-plan" aria-hidden="true"><i></i><b></b></div>
+            <div class="venue-heading"><h1 id="selected-campus">沙河校区</h1><p id="selected-venues">综合馆</p></div>
+            <dl class="availability-total"><dt>可约场次</dt><dd id="count">—</dd></dl>
+          </div>
+          <div class="monitor-toolbar">
+            <div id="monitor-state" class="status" data-tone="neutral" role="status" aria-atomic="true"><i class="dot" aria-hidden="true"></i><span id="monitor-state-label">等待登录</span><span id="monitor-context" class="sr-only"></span></div>
+            <dl class="check-times">
+              <div><dt>上次检查</dt><dd id="checked">—</dd></div>
+              <div><dt>下次检查</dt><dd id="next">—</dd></div>
+            </dl>
+            <button class="button primary" id="monitor-action" type="button" disabled><span class="play-icon" aria-hidden="true"></span><span id="monitor-action-label">开始监控</span></button>
+          </div>
         </header>
-        <div class="scoreboard">
-          <dl class="metrics">
-            <div class="score"><dt>可约场次</dt><dd id="count">—</dd></div>
-            <div><dt>上次检查</dt><dd id="checked">—</dd></div>
-            <div><dt>下次检查</dt><dd id="next">—</dd></div>
-          </dl>
-          <div id="monitor-state" class="status" data-tone="neutral" role="status" aria-atomic="true"><i class="dot" aria-hidden="true"></i><span id="monitor-state-label">等待登录</span><span id="monitor-context" class="sr-only"></span></div>
-        </div>
 
         <div class="monitor-grid">
           <section class="schedule" aria-labelledby="schedule-title-label">
@@ -131,7 +133,7 @@
           <aside class="message-preview" aria-labelledby="sample-heading">
             <h2 id="sample-heading">群消息示例</h2>
             <div class="message-card">
-              <div class="message-top"><strong id="preview-title"></strong><small>17:42 · 北京时间</small></div>
+              <div class="message-top"><img src="icon.png" width="30" height="30" alt=""><div><strong id="preview-title"></strong><small>17:42 · 北京时间</small></div></div>
               <div class="message-body"><strong id="preview-date"></strong><p id="preview-slot"></p><p>场号 <strong>3、5 号</strong>　·　¥25/场</p></div>
             </div>
           </aside>

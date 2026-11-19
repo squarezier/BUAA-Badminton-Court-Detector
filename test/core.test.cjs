@@ -22,7 +22,7 @@ test('Shahe B1–B6 and numbered courts keep distinct identities in snapshots an
   assert.notEqual(slotKey(slot(1)), slotKey(slot('B1')));
   assert.deepEqual(groupSlots(rows)[0].courts, [1, 2, 12, 'B1', 'B2', 'B3', 'B4', 'B5', 'B6']);
   const card = notice('shahe', rows, now).feishuCard;
-  assert.match(card.body.elements[1].content, /场号 \*\*1、2、12、B1、B2、B3、B4、B5、B6 号\*\*/);
+  assert.match(card.body.elements[0].content, /场号 \*\*1、2、12、B1、B2、B3、B4、B5、B6 号\*\*/);
   for (const other of ['38', '39']) assert.throws(() => read(other, ['B1']));
   for (const invalid of ['1', 'B0', 'B7', 'B01', 'B1号', 'A1', 'b1']) assert.throws(() => read('57', [invalid]));
 });
@@ -53,7 +53,7 @@ test('an already green numbered court cannot trigger a Shahe B-court cancellatio
   assert.equal(pushes.length, 1);
   const card = pushes[0].feishuCard;
   assert.match(card.header.title.content, /目标场次重新可约.*沙河校区 1 场次/);
-  assert.match(card.body.elements[1].content, /场号 \*\*B1 号\*\*/);
+  assert.match(card.body.elements[0].content, /场号 \*\*B1 号\*\*/);
 });
 
 test('normalizes Beijing dates across a year boundary and validates visible court data', () => {
@@ -77,6 +77,7 @@ test('validated snapshots keep confirmed reservations separate from green slots'
   const reserved = { court: 4, start: '17:00', end: '18:00' };
   const available = { ...reserved, court: 5, price: 25 };
   const snapshot = validatedSnapshot('57', [{ label: '11月18日', slots: [available], reserved: [reserved, reserved] }], now);
+  assert.equal(snapshot.started, now);
   assert.deepEqual(snapshot.slots, [slot(5)]);
   assert.deepEqual(snapshot.reserved, [{ ...reserved, venue: '57', date: '2026-11-18' }]);
   assert.throws(() => validatedSnapshot('57', [{ label: '11月18日', slots: [available], reserved: [available] }], now));
@@ -137,7 +138,7 @@ test('a confirmed reservation reopening gets a distinct alert for the exact venu
   await monitor.check();
   assert.deepEqual(pushes.map(message => message.title), ['候羽｜学院路校区疑似退订 1 场次']);
   const card = pushes[0].feishuCard.body.elements.map(element => element.content).join('\n');
-  assert.match(card, /已预约.*绿色可约/);
+  assert.match(card, /^\*\*11月18日/);
   assert.match(card, /11月18日[\s\S]*17:00–18:00 · 体育馆主馆[\s\S]*场号 \*\*3 号\*\*[\s\S]*¥25\/场/);
   assert.match(card, /venue-reservation\/38/);
   assert.doesNotMatch(card, /11月19日|训练馆|venue-reservation\/39|1 号/);
@@ -261,10 +262,10 @@ test('Feishu sends a signed availability card with the official booking link', a
     const { schema, header, body: { elements } } = payload.card;
     assert.equal(schema, '2.0');
     assert.equal(header.title.content, '候羽｜沙河校区疑似退订 2 场次');
-    assert.match(elements[0].content, /已预约变为绿色可约/);
-    assert.match(elements[1].content, /\*\*11月18日 周三\*\*/);
-    assert.match(elements[1].content, /\*\*17:00–18:00 · 综合馆\*\*/);
-    assert.match(elements[1].content, /场号 \*\*3、5 号\*\*.*¥25\/场/u);
+    assert.doesNotMatch(JSON.stringify(payload.card), /官网状态从已预约变为绿色可约/);
+    assert.match(elements[0].content, /\*\*11月18日 周三\*\*/);
+    assert.match(elements[0].content, /\*\*17:00–18:00 · 综合馆\*\*/);
+    assert.match(elements[0].content, /场号 \*\*3、5 号\*\*.*¥25\/场/u);
     assert.match(elements.at(-1).content, /\[综合馆 ↗\]\(https:\/\/cgyy\.buaa\.edu\.cn\/venue\/venue-reservation\/57\)/u);
     return Response.json({ code: 0 });
   };
@@ -302,8 +303,8 @@ test('Feishu lists each date separately and caps large notices within the reques
   const first = { ...slot(3, '38'), date: '2026-11-19' };
   const second = { ...slot(5, '39'), date: '2026-11-20', price: 0 };
   const elements = notice('xueyuanlu', [second, first], now).feishuCard.body.elements;
-  assert.match(elements[1].content, /11月19日 周四[\s\S]*体育馆主馆[\s\S]*3 号/u);
-  assert.match(elements[2].content, /11月20日 周五[\s\S]*体育馆训练馆[\s\S]*5 号[\s\S]*免费/u);
+  assert.match(elements[0].content, /11月19日 周四[\s\S]*体育馆主馆[\s\S]*3 号/u);
+  assert.match(elements[1].content, /11月20日 周五[\s\S]*体育馆训练馆[\s\S]*5 号[\s\S]*免费/u);
   const crowded = Array.from({ length: 30 }, (_, index) =>
     Array.from({ length: 120 }, (_, court) => ({
       ...slot(court + 1, '38'), date: index < 15 ? first.date : second.date, price: index + 1,

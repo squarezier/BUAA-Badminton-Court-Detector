@@ -111,6 +111,7 @@ function renderTarget(options, venues, now) {
   text('saved-range', range);
   text('shortcut-range', range);
   text('saved-place', place);
+  get('saved-place').classList.toggle('saved-hours', Boolean(target));
   const minute = clock => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3));
   const start = target ? minute(target.start) : 0;
   const end = target ? minute(target.end) : target === null ? 0 : 1440;
@@ -472,6 +473,7 @@ if (!app) {
   get('push-unlock').addEventListener('click', () => runPushAction(app.unlockPush));
   get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
+  app.onClearDraft(clearConnectionInputs);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));
   window.addEventListener('focus', () => { if (current) render(); });
 }

@@ -171,7 +171,7 @@ class CourtMonitor {
     return Math.min(firstRetry * 2 ** (this.cyclesWithErrors - 1), Math.max(interval, 15 * 60000));
   }
 
-  applySnapshot(id, sample) {
+  applySnapshot(id, sample, readStarted) {
     const now = this.now();
     const upcoming = sample.slots.filter(slot => startsAt(slot) > now);
     const prior = this.previousReservations.get(id);
@@ -182,10 +182,14 @@ class CourtMonitor {
         if (item.venue === id && !available.has(key)) this.pending.delete(key);
       }
       for (const [key, slot] of available) {
-        if ((prior.has(key) || this.pending.has(key)) && matchesTarget(slot, this.target)) this.pending.set(key, slot);
+        if (!matchesTarget(slot, this.target)) continue;
+        const lead = VENUES[id].paidRefundLeadMs;
+        // A refund may have happened between observations, even if green first appears after the deadline.
+        const couldRefund = slot.price === 0 || lead === undefined || prior.started <= startsAt(slot) - lead;
+        if (this.pending.has(key) || (prior.keys.has(key) && couldRefund)) this.pending.set(key, slot);
       }
     }
-    this.previousReservations.set(id, new Set((sample.reserved ?? []).map(slotKey)));
+    this.previousReservations.set(id, { started: sample.started ?? readStarted, keys: new Set((sample.reserved ?? []).map(slotKey)) });
   }
 
   async notifyPending(failedVenues, signal) {
@@ -252,9 +256,10 @@ class CourtMonitor {
       for (const id of venueIds) {
         try {
           if (siteLimit) throw siteLimit;
+          const readStarted = this.now();
           const sample = await this.checkVenue(id, task.signal);
           if (task.signal.aborted) return;
-          this.applySnapshot(id, sample);
+          this.applySnapshot(id, sample, readStarted);
         } catch (error) {
           if (task.signal.aborted) return;
           if (error instanceof UserError && error.code === 'auth') {

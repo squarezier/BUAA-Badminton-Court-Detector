@@ -43,6 +43,94 @@ test('target markers follow the notification rule across both venues while all f
   assert.ok(monitor.state().rows.every(row => !row.inTarget));
 });
 
+const refundDeadline = Date.parse('2026-11-18T14:00:00+08:00');
+
+for (const offset of [-1, 0, 1]) {
+  test(`Shahe paid reopening uses the last sold observation at refund deadline offset ${offset}ms`, async t => {
+    let now = refundDeadline - 200;
+    let phase = 'booked';
+    const courts = [slot(1), slot(2), { ...slot(3), price: 0 }, { ...slot(4), date: '2026-11-19' }];
+    const messages = [];
+    const monitor = setup(t, {
+      now: () => now,
+      async checkVenue() {
+        if (phase === 'outage') throw new Error('simulated offline');
+        if (phase === 'booked') {
+          now = refundDeadline + 1000; // The successful read finishes after the deadline in every case.
+          return { slots: [], reserved: courts, dates: ['2026-11-18', '2026-11-19'], started: refundDeadline + offset };
+        }
+        return { slots: courts, dates: ['2026-11-18', '2026-11-19'] };
+      },
+      async dispatch(message) { messages.push(message); return accepted; },
+    });
+    await monitor.check();
+    phase = 'outage';
+    await monitor.check();
+    phase = 'green';
+    await monitor.check();
+    await monitor.check();
+    assert.equal(monitor.state().slotCount, 4);
+    assert.equal(messages.length, 1);
+    assert.match(messages[0].title, offset <= 0 ? /4 场次/ : /2 场次/);
+    if (offset <= 0) assert.match(messages[0].markdown, /1、2号/);
+    else assert.doesNotMatch(messages[0].markdown, /1、2号/);
+    assert.match(messages[0].markdown, /3号/);
+    assert.match(messages[0].markdown, /4号/);
+  });
+}
+
+test('Xueyuanlu samples each venue separately and only applies a published refund deadline', async t => {
+  let now = refundDeadline - 100;
+  let booked = true;
+  const messages = [];
+  const monitor = setup(t, {
+    now: () => now,
+    options: { campus: 'xueyuanlu', interval: 2 },
+    async checkVenue(id) {
+      if (!booked) return stamped(slot(1, id));
+      const sold = { ...stamped(), reserved: [slot(1, id)] };
+      if (id === '38') {
+        now = refundDeadline + 100;
+        sold.started = refundDeadline + 20;
+      }
+      return sold;
+    },
+    async dispatch(message) { messages.push(message); return accepted; },
+  });
+  await monitor.check();
+  booked = false;
+  await monitor.check();
+  assert.equal(monitor.state().slotCount, 2);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].content, /主馆/);
+  assert.doesNotMatch(messages[0].content, /训练馆/);
+});
+
+test('a confirmed retry survives the refund deadline and drops a court exactly when its session starts', async t => {
+  let now = refundDeadline;
+  let booked = true;
+  const messages = [];
+  const courts = [slot(1), { ...slot(2), start: '18:00', end: '19:00' }];
+  const monitor = setup(t, {
+    now: () => now,
+    async checkVenue() { return booked ? { ...stamped(), reserved: courts } : stamped(...courts); },
+    async dispatch(message) {
+      messages.push(message);
+      return messages.length === 1 ? { kind: 'retry', retryAfterMs: 60000, text: 'retry' } : accepted;
+    },
+  });
+  await monitor.check();
+  booked = false;
+  now++;
+  await monitor.check();
+  now = Date.parse('2026-11-18T17:00:00+08:00');
+  await monitor.check();
+  await monitor.check();
+  assert.deepEqual(messages.map(message => message.title), ['候羽｜沙河校区疑似退订 2 场次', '候羽｜沙河校区疑似退订 1 场次']);
+  assert.match(messages[1].markdown, /2号/);
+  assert.doesNotMatch(messages[1].markdown, /1号/);
+});
+
 test('a rapid pause and restart waits for the aborted poll to settle', async t => {
   const first = deferred();
   let calls = 0;

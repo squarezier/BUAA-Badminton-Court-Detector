@@ -286,6 +286,14 @@ async function run() {
     await fs.writeFile(path.join(target, name), (await window.webContents.capturePage(rect)).toPNG());
   }
   assert.equal(await js('document.title'), '候羽');
+  const toolbarFits = () => js(`(() => {
+    const head = document.querySelector('.monitor-head').getBoundingClientRect();
+    return ['#selected-campus', '#count', '#monitor-action', '#next', '#monitor-state'].every(selector => {
+      const pos = document.querySelector(selector).getBoundingClientRect();
+      return pos.width > 0 && pos.left >= head.left && pos.right <= head.right && pos.top >= head.top && pos.bottom <= head.bottom;
+    });
+  })()`);
+  assert.equal(await toolbarFits(), true, 'the campus, count, status, schedule and primary control fit the masthead');
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell')].map(cell => cell.rowSpan)"), [1, 1, 3]);
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell small')].map(el => el.textContent)"), ['今天 · 周三', '明天 · 周四', '周五']);
   assert.deepEqual(await js("[document.querySelectorAll('.in-target').length, document.querySelectorAll('.target-caption').length]"), [3, 1]);
@@ -394,6 +402,7 @@ async function run() {
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');
+  assert.equal(await toolbarFits(), true, 'the entire monitoring toolbar fits the small desktop window');
   assert.ok(await js("document.querySelector('#interval').getBoundingClientRect().width >= 42 && document.querySelector('#interval-unit').getBoundingClientRect().width >= 35"),
     'both parts of the interval control remain legible at minimum width');
   window.webContents.setZoomFactor(2);

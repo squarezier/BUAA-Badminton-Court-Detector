@@ -1,0 +1,219 @@
+name: Houyu desktop release checks
+on:
+  push:
+    branches: ['qa-desktop-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package-windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Package the checksum-verified official Electron runtime
+        run: |
+          python3 scripts/package.py win32-x64 runtime staging Houyu-Windows-x64.zip
+          sha256sum Houyu-Windows-x64.zip > Windows.sha256
+          git rev-parse HEAD > Windows.source
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: houyu-windows-tested
+          path: |
+            Houyu-Windows-x64.zip
+            Windows.sha256
+            Windows.source
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+  desktop:
+    needs: package-windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, arch: x64 }
+          - { os: windows-11-arm, arch: x64 }
+          - { os: macos-15-intel, arch: x64 }
+          - { os: macos-15, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          architecture: ${{ matrix.arch }}
+          package-manager-cache: false
+      - name: Install the locked dependencies for this architecture
+        run: npm ci
+        env:
+          ELECTRON_INSTALL_ARCH: ${{ matrix.arch }}
+      - name: Verify cancellation rules, retries and campus coverage
+        run: npm test
+      - name: Exercise sign-in, target editing, both venues and Feishu delivery
+        run: node node_modules/electron/cli.js test/desktop-production.cjs "${{ runner.temp }}/houyu-app"
+      - name: Replay timetable layouts and check native controls
+        run: node node_modules/electron/cli.js test/desktop-smoke.cjs "${{ runner.temp }}/houyu-ui"
+      - if: runner.os == 'Windows'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: houyu-windows-tested
+          path: ${{ runner.temp }}/houyu-tested
+      - name: Verify and launch the Windows distribution used for release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = Join-Path $env:RUNNER_TEMP 'houyu-tested'
+          $zip = Join-Path $files 'Houyu-Windows-x64.zip'
+          $dir = Join-Path $env:RUNNER_TEMP 'houyu-final'
+          $expected = ((Get-Content (Join-Path $files 'Windows.sha256') -Raw) -split '\s+')[0]
+          if ((Get-FileHash $zip).Hash -ne $expected) { throw 'Release checksum mismatch' }
+          Expand-Archive -LiteralPath $zip -DestinationPath $dir
+          $exe = Join-Path $dir 'Houyu/Houyu.exe'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $actual = (Get-Item $exe).VersionInfo.ProductVersion
+          if ($actual -ne $version -and $actual -ne ($version + '.0')) { throw 'Unexpected executable version' }
+          if ((Get-Content (Join-Path $files 'Windows.source') -Raw).Trim() -ne $env:GITHUB_SHA) { throw 'Unexpected source revision' }
+          $p = Start-Process -FilePath $exe -PassThru
+          try {
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep -Milliseconds 500
+              $p.Refresh()
+              if ($p.HasExited) { throw 'The packaged application exited during startup' }
+              if ($p.MainWindowTitle -eq '候羽') { break }
+            }
+            if ($p.MainWindowTitle -ne '候羽') { throw 'The packaged window did not appear' }
+            Get-CimInstance Win32_OperatingSystem | Select-Object Caption,OSArchitecture,Version
+            Write-Output "Verified $expected and launched the Houyu desktop window."
+          } finally { if (!$p.HasExited) { Stop-Process -Id $p.Id -Force } }
+      - name: Build and verify the signed macOS package
+        if: runner.os == 'macOS'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 scripts/package.py "darwin-$ARCH" runtime staging "Houyu-macOS-$ARCH.zip"
+          ditto -x -k "Houyu-macOS-$ARCH.zip" "$RUNNER_TEMP/verified-mac"
+          bundle="$RUNNER_TEMP/verified-mac/候羽/候羽.app"
+          codesign --verify --deep --strict "$bundle"
+          cat > "$RUNNER_TEMP/CheckHouyuWindow.swift" <<'SWIFT'
+          import Cocoa
+          import CoreGraphics
+          let pid = Int32(CommandLine.arguments[1])!
+          let end = Date().addingTimeInterval(45)
+          while Date() < end && kill(pid, 0) == 0 {
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            let main = windows.contains { info in
+              guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                    (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                    let bounds = info[kCGWindowBounds as String] as? [String: NSNumber] else { return false }
+              return (bounds["Width"]?.intValue ?? 0) >= 640 && (bounds["Height"]?.intValue ?? 0) >= 400
+            }
+            if main { exit(0) }
+            Thread.sleep(forTimeInterval: 0.3)
+          }
+          exit(1)
+          SWIFT
+          swiftc "$RUNNER_TEMP/CheckHouyuWindow.swift" -o "$RUNNER_TEMP/check-houyu-window"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")
+          "$bundle/Contents/MacOS/$executable" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          "$RUNNER_TEMP/check-houyu-window" "$pid"
+          shasum -a 256 "Houyu-macOS-$ARCH.zip" > "macOS-$ARCH.sha256"
+          git rev-parse HEAD > "macOS-$ARCH.source"
+      - if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: houyu-macos-${{ matrix.arch }}-tested
+          path: |
+            Houyu-macOS-${{ matrix.arch }}.zip
+            macOS-${{ matrix.arch }}.source
+            macOS-${{ matrix.arch }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+  package-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - name: Build the Debian package from the verified Electron distribution
+        run: |
+          python3 scripts/package.py linux-x64 runtime staging Houyu-Linux-amd64.deb
+          sha256sum Houyu-Linux-amd64.deb > Linux.sha256
+          git rev-parse HEAD > Linux.source
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: houyu-linux-tested
+          path: |
+            Houyu-Linux-amd64.deb
+            Linux.sha256
+            Linux.source
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+          overwrite: true
+  linux-desktop:
+    needs: package-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: houyu-linux-tested
+          path: ${{ runner.temp }}/houyu-tested
+      - name: Install and verify the exact Ubuntu package
+        run: |
+          cd "${{ runner.temp }}/houyu-tested"
+          sha256sum -c Linux.sha256
+          test "$(cat Linux.source)" = "$GITHUB_SHA"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./Houyu-Linux-amd64.deb xvfb xauth dbus-x11 gnome-keyring libsecret-tools openbox xdotool desktop-file-utils fonts-noto-cjk
+          dpkg-query -W houyu
+      - run: npm ci
+      - name: Use the installed Chromium sandbox for source-level regressions
+        run: |
+          electron_dir=$(node -p "require('node:path').dirname(require('electron'))")
+          cmp "$electron_dir/chrome-sandbox" /opt/houyu/chrome-sandbox
+          ln -sf /opt/houyu/chrome-sandbox "$electron_dir/chrome-sandbox"
+      - run: npm test
+      - name: Launch the DEB, exercise desktop flow and themes
+        run: xvfb-run -a -s '-screen 0 1440x960x24' dbus-run-session -- bash test/linux-desktop.sh "$RUNNER_TEMP/linux-ui" desktop
+      - name: Prove native keyring persists across processes
+        run: xvfb-run -a dbus-run-session -- bash test/linux-desktop.sh "$RUNNER_TEMP/linux-vault" keyring
+      - name: Prove missing keyring holds the connection in memory
+        run: xvfb-run -a dbus-run-session -- bash test/linux-desktop.sh "$RUNNER_TEMP/no-vault" no-keyring

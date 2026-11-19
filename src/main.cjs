@@ -12,6 +12,7 @@ const {
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
 const { CourtMonitor, UserError, CampusRateLimit } = require('./monitor.cjs');
 const { Preferences } = require('./preferences.cjs');
+const { httpsUrl, campusPage, allowedCampusRequest, assetRequestHeaders, assetResponseHeaders } = require('./campus-policy.cjs');
 const { feishuConnection } = require('./push-connection.cjs');
 const { sendPush, testNotice } = require('./push.cjs');
 
@@ -19,20 +20,29 @@ const UI = 'courtwatch://app/index.html';
 const ICON = path.join(__dirname, 'ui', 'icon.png');
 const PROFILE_IDENTITY = '北航羽毛球余场提醒';
 const PUSH_GUIDE = 'https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN';
-const CAMPUS_HOSTS = new Set(['cgyy.buaa.edu.cn', 'sso.buaa.edu.cn']);
 const WORLD = 1201;
 const appFiles = new Map([
   ['/index.html', 'text/html; charset=utf-8'], ['/styles.css', 'text/css; charset=utf-8'],
   ['/renderer.js', 'text/javascript; charset=utf-8'], ['/icon.png', 'image/png'],
-]);
+].map(([file, type]) => [new URL(file, UI).href, type]));
 const webPreferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false, spellcheck: false, webviewTag: false };
 let mainWindow, campusWindow, tray, campusSession, uiSession, monitor, prefs;
 let exiting = false;
 let sending = false;
 let editing = false;
 let changingConnection = false;
+let campusSessionNumber = 0;
 const nextPushTestAt = new Map();
 const scanLimits = new Map();
+
+// Electron includes the complete navigation URL in its default load warning.
+// SSO return URLs may carry short-lived tickets. Retain the network error only.
+process.prependListener('warning', warning => {
+  if (warning.name !== 'electron' || !warning.message.startsWith('Failed to load URL: ')) return;
+  const code = / with error: (ERR_[A-Z0-9_]+)$/.exec(warning.message)?.[1];
+  warning.message = code ? `Page navigation failed (${code})` : 'Page navigation failed';
+  warning.stack = `${warning.name}: ${warning.message}`;
+});
 
 // Check before creating any window, session, or opening the system vault.
 if (app.isPackaged) {
@@ -54,24 +64,6 @@ app.setPath('sessionData', profile);
 app.enableSandbox();
 protocol.registerSchemesAsPrivileged([{ scheme: 'courtwatch', privileges: { standard: true, secure: true } }]);
 
-function httpsUrl(value) {
-  try {
-    const url = new URL(value);
-    if (url.protocol === 'https:' && !url.port && !url.username && !url.password) return url;
-  } catch { /* URL was not usable */ }
-  return null;
-}
-
-function campusPage(value) {
-  const url = httpsUrl(value);
-  return Boolean(url && CAMPUS_HOSTS.has(url.hostname));
-}
-
-function campusResource(value) {
-  const url = httpsUrl(value);
-  return Boolean(url && (url.hostname === 'buaa.edu.cn' || url.hostname.endsWith('.buaa.edu.cn')));
-}
-
 function onCampusLogin(value) {
   const url = httpsUrl(value);
   return Boolean(url && (url.hostname === 'sso.buaa.edu.cn' || (url.origin === CAMPUS_ORIGIN && /^\/venue\/login\/?$/.test(url.pathname))));
@@ -85,9 +77,9 @@ function noPermissions(target) {
 }
 
 async function appResponse(request) {
+  const mime = appFiles.get(request.url);
+  if (request.method !== 'GET' || !mime) return new Response('Not found', { status: 404 });
   const url = new URL(request.url);
-  const mime = appFiles.get(url.pathname);
-  if (request.method !== 'GET' || url.hostname !== 'app' || url.search || !mime) return new Response('Not found', { status: 404 });
   const data = await fs.readFile(path.join(__dirname, 'ui', url.pathname.slice(1)));
   return new Response(data, { headers: {
     'content-type': mime,
@@ -98,9 +90,9 @@ async function appResponse(request) {
 
 function secureCampusWindow(win, allowSameWindowPopup) {
   const contents = win.webContents;
-  for (const name of ['will-navigate', 'will-redirect']) {
-    contents.on(name, (event, url, _inPlace, isMainFrame = true) => {
-      if (!(isMainFrame ? campusPage : campusResource)(event.url ?? url)) event.preventDefault();
+  for (const name of ['will-frame-navigate', 'will-redirect']) {
+    contents.on(name, (event, url) => {
+      if (!campusPage(event.url ?? url)) event.preventDefault();
     });
   }
   contents.setWindowOpenHandler(({ url }) => {
@@ -123,10 +115,14 @@ function showMain() {
   if (monitor) publish(monitor.state());
 }
 
-function publish(state) {
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isCrashed()) {
-    mainWindow.webContents.send('courtwatch:state', viewState(state));
+function sendToInterface(channel, ...values) {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isCrashed() && mainWindow.webContents.getURL() === UI) {
+    mainWindow.webContents.send(channel, ...values);
   }
+}
+
+function publish(state) {
+  sendToInterface('courtwatch:state', viewState(state));
   if (!tray || tray.isDestroyed()) return;
   const label = state.running ? (state.checking ? '正在查场地' : '监控中') : '监控已暂停';
   tray.setToolTip(`${productName} · ${label}`);
@@ -338,7 +334,8 @@ async function testPushConnection(candidate, sessionOnly = false) {
 function handle(action, run) {
   ipcMain.handle(`courtwatch:${action}`, async (event, value) => {
     const frame = event.senderFrame;
-    if (!mainWindow || event.sender !== mainWindow.webContents || !frame || frame.parent || frame.url !== UI) {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents ||
+        !frame || frame !== event.sender.mainFrame || frame.url !== UI || event.sender.getURL() !== UI) {
       return { ok: false, error: '请求来源无效。' };
     }
     try { return { ok: true, value: await run(value) }; }
@@ -363,8 +360,14 @@ function setupIpc() {
   handle('log-out', async () => {
     if (campusWindow && !campusWindow.isDestroyed()) campusWindow.destroy();
     monitor.setAuth('signed-out');
-    await campusSession.clearStorageData();
-    await campusSession.clearCache();
+    const previous = campusSession;
+    previous.webRequest.onBeforeRequest((_request, reply) => reply({ cancel: true }));
+    campusSession = newCampusSession();
+    const closed = await Promise.allSettled([previous.closeAllConnections()]);
+    const cleared = await Promise.allSettled([previous.clearAuthCache(), previous.clearStorageData(), previous.clearCache()]);
+    if ([...closed, ...cleared].some(op => op.status === 'rejected')) {
+      throw new UserError('已切换到新的登录会话。部分旧缓存清理失败，退出候羽可结束原内存会话。');
+    }
   });
   handle('start', () => {
     if (editing) throw new UserError('正在保存监控设置，请稍候。');
@@ -414,29 +417,36 @@ function setupIpc() {
   handle('push-guide', () => shell.openExternal(PUSH_GUIDE));
 }
 
-async function initialize() {
-  campusSession = session.fromPartition('buaa-session', { cache: false });
-  uiSession = session.fromPartition('courtwatch-ui', { cache: false });
-  noPermissions(campusSession);
-  noPermissions(uiSession);
-  campusSession.webRequest.onResponseStarted({ urls: [CAMPUS_ORIGIN + '/*'] }, details => {
+function newCampusSession() {
+  const partition = campusSessionNumber === 0 ? 'buaa-session' : `buaa-session-${campusSessionNumber}`;
+  campusSessionNumber++;
+  const target = session.fromPartition(partition, { cache: false });
+  noPermissions(target);
+  target.webRequest.onResponseStarted({ urls: [CAMPUS_ORIGIN + '/*'] }, details => {
     if (details.statusCode !== 429 || !['mainFrame', 'xhr'].includes(details.resourceType)) return;
     const limited = scanLimits.get(details.webContentsId);
     if (!limited) return;
     const header = Object.entries(details.responseHeaders ?? {}).find(([name]) => name.toLowerCase() === 'retry-after');
     limited(header?.[1]?.[0]);
   });
-  campusSession.webRequest.onBeforeRequest((details, callback) => {
-    const passiveAsset = details.method === 'GET' && ['image', 'font', 'stylesheet', 'media'].includes(details.resourceType);
-    const allowed = campusPage(details.url) || (passiveAsset && campusResource(details.url));
-    callback({ cancel: !allowed });
+  target.webRequest.onBeforeRequest((details, callback) => {
+    callback({ cancel: !allowedCampusRequest(details) });
   });
-  campusSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = details.requestHeaders;
-    if (!campusPage(details.url)) {
-      for (const name of Object.keys(headers)) if (/^(?:cookie|authorization|referer)$/i.test(name)) delete headers[name];
-    }
-    callback({ requestHeaders: headers });
+  target.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback(campusPage(details.url) ? {} : { requestHeaders: assetRequestHeaders(details.requestHeaders) });
+  });
+  target.webRequest.onHeadersReceived((details, callback) => {
+    callback(campusPage(details.url) ? {} : { responseHeaders: assetResponseHeaders(details.responseHeaders ?? {}) });
+  });
+  return target;
+}
+
+async function initialize() {
+  campusSession = newCampusSession();
+  uiSession = session.fromPartition('courtwatch-ui', { cache: false });
+  noPermissions(uiSession);
+  uiSession.webRequest.onBeforeRequest((details, callback) => {
+    callback({ cancel: details.method !== 'GET' || !appFiles.has(details.url) });
   });
   await uiSession.protocol.handle('courtwatch', appResponse);
   prefs = new Preferences(path.join(app.getPath('userData'), 'settings.json'), safeStorage);
@@ -468,6 +478,10 @@ async function initialize() {
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.webContents.on('will-frame-navigate', event => event.preventDefault());
   mainWindow.webContents.on('page-title-updated', event => event.preventDefault());
+  const clearDraft = () => sendToInterface('courtwatch:clear-draft');
+  mainWindow.on('hide', clearDraft);
+  mainWindow.on('minimize', clearDraft);
+  powerMonitor.on('lock-screen', clearDraft);
   mainWindow.on('close', event => {
     if (exiting || !tray) return;
     event.preventDefault();
@@ -494,7 +508,7 @@ async function initialize() {
     ] }] : []),
     { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
   ]));
-  powerMonitor.on('suspend', () => monitor.setSuspended(true));
+  powerMonitor.on('suspend', () => { clearDraft(); monitor.setSuspended(true); });
   powerMonitor.on('resume', () => monitor.setSuspended(false));
   publish(monitor.state());
   mainWindow.once('ready-to-show', () => mainWindow.show());

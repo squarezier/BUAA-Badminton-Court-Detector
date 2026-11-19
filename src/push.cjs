@@ -94,7 +94,7 @@ function notice(campus, slots, at, targeted = false) {
   const footer = '余量随时变化，请以预约页为准。';
   const title = targeted ? `${productName}｜目标场次重新可约 · ${site.label} ${slots.length} 场次` :
     `${productName}｜${site.label}疑似退订 ${slots.length} 场次`;
-  const elements = [markdownBlock(statusChange), ...feishuAvailability(groups, feishuLinks)];
+  const elements = feishuAvailability(groups, feishuLinks);
   return {
     title,
     content: `<p>${statusChange}</p><ul>${details.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>${more ? `<p>${more}</p>` : ''}<p>${links}</p><p>${footer}</p>`,

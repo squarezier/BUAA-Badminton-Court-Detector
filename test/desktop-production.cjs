@@ -148,6 +148,17 @@ async function run(win) {
   assert.equal(await js("typeof window.require === 'undefined' && typeof window.process === 'undefined' && !customElements.get('webview')"), true);
   cases++;
 
+  loginFailure = 'network';
+  const warning = once(process, 'warning', { signal: AbortSignal.timeout(10000) });
+  const synthetic = new BrowserWindow({ show: false, webPreferences: { session: campus, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  try {
+    await assert.rejects(synthetic.loadURL(campusOrigin + '/venue/login?ticket=mock-ticket-for-test'));
+    const [diagnostic] = await warning;
+    assert.match(diagnostic.message, /Page navigation failed \(ERR_FAILED\)/);
+    assert.doesNotMatch(diagnostic.message + diagnostic.stack, /mock-ticket|\/venue\/login|https?:\/\//);
+  } finally { synthetic.destroy(); loginFailure = ''; }
+  cases++;
+
   assert.equal(await js("getComputedStyle(document.querySelector('.window-bar')).getPropertyValue('app-region')"), 'drag');
   assert.equal(await js("document.querySelector('.window-bar').getBoundingClientRect().bottom <= document.querySelector('#monitor-action').getBoundingClientRect().top"), true);
   assert.ok(win.isResizable());
@@ -181,6 +192,17 @@ async function run(win) {
     document.querySelector('#push-form').requestSubmit();
   `);
   const storedCiphertext = () => JSON.parse(fs.readFileSync(settings, 'utf8')).encryptedToken;
+  const fillDraft = () => js("document.querySelector('#feishu-webhook').value = 'draft-address'; document.querySelector('#feishu-secret').value = 'draft-secret'");
+  const clearedDraft = () => js("!document.querySelector('#feishu-webhook').value && !document.querySelector('#feishu-secret').value");
+  await fillDraft();
+  win.hide();
+  await waitFor(clearedDraft, 'hiding to the tray clears unsubmitted credentials');
+  win.show();
+  await fillDraft();
+  powerMonitor.emit('lock-screen');
+  await waitFor(clearedDraft, 'locking clears both unsubmitted credentials');
+  assert.equal(pushRequests, 0);
+  cases++;
   assert.equal((await state()).delivery.configured, false, 'a locked startup never selects a plaintext fallback');
   await click('#push-unlock');
   await waitFor(async () => (await feedback()).includes('暂时无法解锁'), 'system vault stays locked');
@@ -270,7 +292,7 @@ async function run(win) {
   wake();
   await waitFor(view => view.slotCount === 3 && !view.checking && pushed.length === 2, 'only reopened slots are sent while hidden');
   assert.equal(pushed[1].title, '候羽｜沙河校区疑似退订 1 场次');
-  assert.match(pushed[1].content, /已预约.*绿色可约/);
+  assert.match(pushed[1].content, /^\*\*\d+月\d+日/);
   assert.match(pushed[1].content, /07:00–08:00 · 综合馆[\s\S]*场号 \*\*4 号\*\*.*¥15\/场/);
   assert.match(pushed[1].content, /venue-reservation\/57/);
   assert.doesNotMatch(pushed[1].content, /1 号|2 号/);
@@ -414,10 +436,32 @@ async function run(win) {
   await campus.cookies.set(fakeCookie);
   assert.equal((await campus.cookies.get({ name: fakeCookie.name })).length, 1);
   assert.equal((await win.webContents.session.cookies.get({ name: fakeCookie.name })).length, 0);
+  const rotated = once(app, 'session-created', { signal: AbortSignal.timeout(10000) });
   await click('#account-action');
+  const [freshSession] = await rotated;
+  assert.notEqual(freshSession, campus);
+  assert.equal(freshSession.getStoragePath(), null);
+  assert.equal((await freshSession.cookies.get({ name: fakeCookie.name })).length, 0);
   const signedOut = await waitFor(view => view.auth === 'signed-out', 'explicit sign-out');
   assert.equal(signedOut.delivery.configured, true);
   await waitFor(async () => !(await campus.cookies.get({ name: fakeCookie.name })).length, 'explicit logout clears school cookies');
+  cases++;
+
+  // All traffic remains in the local protocol fixture in both sessions.
+  await freshSession.setProxy({ mode: 'fixed_servers', proxyRules: '127.0.0.1:1' });
+  freshSession.protocol.handle('https', request => new URL(request.url).pathname === '/venue/login'
+    ? Response.redirect(campusOrigin + '/venue/home') : html('<button>退出</button>'));
+  await click('#account-action');
+  await waitFor(view => view.auth === 'signed-in', 'a new session can sign in independently');
+  await freshSession.cookies.set(fakeCookie);
+  const clearData = freshSession.clearStorageData.bind(freshSession);
+  freshSession.clearStorageData = async () => { throw new Error('fixture data cleanup unavailable'); };
+  const reattempt = once(app, 'session-created', { signal: AbortSignal.timeout(10000) });
+  await assert.rejects(js('window.courtWatch.logOut()'), /部分旧缓存清理失败/);
+  const [isolated] = await reattempt;
+  assert.equal((await state()).auth, 'signed-out');
+  assert.equal((await isolated.cookies.get({ name: fakeCookie.name })).length, 0);
+  await clearData();
   cases++;
 
   await click('[data-page=feishu]');
