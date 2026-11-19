@@ -25,7 +25,7 @@
 - 时间按北京时间计算。选择 18:00–20:00，可收到 18:00–19:00 或 19:00–20:00 的退订。场次必须完整落在这个范围内。
 - 沙河和学院路各自保留一个目标。监控只查询当前选中的校区，运行中可以修改目标。
 - 目标到期后该校区静默。编辑成新日期可继续等场，点「移除目标」可重新接收该校区的所有退订。升级前未设置目标的用户仍接收该校区全部退订。
-- 飞书目标卡片逐项列出本轮符合条件并重新变绿的场次。场次较多时分多张发送。首页空场表保留所选校区全部可约场次，更改目标时不会补发原本已绿的空场。
+- 飞书按日期、时段、场馆和场号列出符合目标的退订。首页保留整个校区的空场，用「目标时段」和陶土色竖线标出提醒范围。更改目标时，已有空场只更新显示。
 
 ![提醒目标设置（示例数据）](target.png)
 
@@ -61,7 +61,7 @@ npx electron test/desktop-smoke.cjs ./qa/preview
 
 项目使用 Electron 45.3.4。安装和构建所需的 Electron 来自其官方发布。[Electron 发行说明](https://releases.electronjs.org/release/v45.3.4)
 
-`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出 ZIP 路径。运行时目录应包含对应 Electron ZIP 与官方 `SHASUMS256.txt`。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。Linux DEB 在 Ubuntu 上用 `unzip` 与 `dpkg-deb` 构建，安装时使用官方 Chromium 沙箱。
+`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出文件路径。运行时目录应包含对应 Electron ZIP 与官方 `SHASUMS256.txt`。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。Linux DEB 在 Ubuntu 上用 `unzip` 与 `dpkg-deb` 构建，安装时使用官方 Chromium 沙箱。
 
 ```sh
 python3 scripts/package.py darwin-arm64 ./runtime ./staging ./Houyu-macOS-arm64.zip

@@ -153,6 +153,8 @@ tbody .new-day > *, .date-cell { border-top: 1px solid var(--line); }
 .date-cell small { font-weight: 450; color: var(--muted); font-size: 11px; }
 .slot-time, .price { font-family: var(--numeric); font-size: 13px; white-space: nowrap; }
 .slot-time { letter-spacing: -.045em; }
+.in-target .slot-time { padding-left: 9px; box-shadow: inset 2px 0 var(--clay-ink); }
+.target-caption { display: block; width: fit-content; color: var(--clay-ink); font: 550 11px/1.5 system-ui, sans-serif; letter-spacing: .03em; }
 .venue-link { min-height: 26px; white-space: nowrap; font-size: 12px; line-height: 1.45; padding: 2px 7px; border-radius: 3px; }
 .venue-link[data-venue="38"] { color: var(--selected-ink); background: var(--blue-paper); }
 .venue-link[data-venue="39"] { color: var(--plum-ink); background: var(--plum-paper); }
@@ -246,5 +248,24 @@ input::placeholder { color: var(--muted); }
 }
 @media (forced-colors: active) {
   .court-number, .venue-link, .choice input:checked + span { border: 1px solid CanvasText; }
+  .in-target .slot-time { border-inline-start: 2px solid CanvasText; }
   :focus-visible, .choice input:focus-visible + span { outline: 2px solid Highlight; }
+}
+@media (max-width: 620px) {
+  .shell { grid-template: var(--bar-height) auto minmax(0, 1fr) / minmax(0, 1fr); }
+  .window-bar { background: var(--rail); }
+  .rail { grid-area: 2 / 1; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 7px; padding: 5px 12px 9px; border: 0; border-bottom: 1px solid var(--line); }
+  .brand { margin: 0; gap: 5px; }
+  .rail-foot { grid-area: 1 / 2; margin: 0; }
+  .court-plan { display: none; }
+  .account { border: 0; padding: 0; gap: 8px; }
+  .navigation { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 3px; }
+  .nav { flex: 1 1 auto; width: auto; justify-content: center; min-height: 32px; }
+  .workspace { grid-area: 3 / 1; padding: 13px 12px 24px; }
+  .page-head { margin-bottom: 12px; min-height: 44px; }
+  .inspector { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .metrics > div { padding-inline: 8px; }
+  .metrics dd { font-size: 19px; }
+  .metrics .score dd { font-size: 30px; }
+  .scoreboard .status { margin-left: 8px; }
 }

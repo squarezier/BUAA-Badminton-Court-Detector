@@ -6,6 +6,7 @@
   "description": "北航两校区羽毛球场地余量监控与飞书提醒",
   "main": "src/main.cjs",
   "scripts": {
+    "postinstall": "node scripts/install-runtime.cjs",
     "start": "electron .",
     "test": "node --test test/*.test.cjs"
   },

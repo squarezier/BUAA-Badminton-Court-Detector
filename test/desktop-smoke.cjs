@@ -174,9 +174,9 @@ async function run() {
     rows: [
       { date: '2026-11-18', start: '17:00', end: '18:00', venue: '38', courts: [3, 5], price: 25 },
       { date: '2026-11-19', start: '08:00', end: '09:00', venue: '39', courts: [17, 20, 23], price: 15 },
-      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '38', courts: [4, 7], price: 25 },
-      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '39', courts: [18], price: 25 },
-      { date: '2026-11-20', start: '19:00', end: '20:00', venue: '39', courts: [21], price: 25 },
+      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '38', courts: [4, 7], price: 25, inTarget: true },
+      { date: '2026-11-20', start: '18:00', end: '19:00', venue: '39', courts: [18], price: 25, inTarget: true },
+      { date: '2026-11-20', start: '19:00', end: '20:00', venue: '39', courts: [21], price: 25, inTarget: true },
     ],
     venues: ['体育馆主馆', '体育馆训练馆（副馆）'].map((label, index) => ({
       id: String(38 + index), label, dates: ['2026-11-18', '2026-11-19', '2026-11-20'], at: 1, error: '',
@@ -223,6 +223,8 @@ async function run() {
   }
   assert.equal(await js('document.title'), '候羽');
   assert.deepEqual(await js("[...document.querySelectorAll('.date-cell')].map(cell => cell.rowSpan)"), [1, 1, 3]);
+  assert.deepEqual(await js("[...document.querySelectorAll('.date-cell small')].map(el => el.textContent)"), ['今天 · 周三', '明天 · 周四', '周五']);
+  assert.deepEqual(await js("[document.querySelectorAll('.in-target').length, document.querySelectorAll('.target-caption').length]"), [3, 1]);
   assert.deepEqual(await js("[...document.querySelectorAll('#booking-links button')].map(el => el.textContent)"), ['主馆预约 ↗', '训练馆预约 ↗']);
   const readable = () => js(`(() => {
     const luminance = color => {
@@ -309,6 +311,16 @@ async function run() {
   await window.webContents.executeJavaScript("document.querySelector('[data-page=monitor]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Monitor page fits the minimum width');
+  window.webContents.setZoomFactor(2);
+  await paint();
+  assert.equal(await js(`document.documentElement.scrollWidth <= innerWidth &&
+    [...document.querySelectorAll('.navigation button, #account-action')].every(el => {
+      const box = el.getBoundingClientRect();
+      return box.width > 0 && box.left >= 0 && box.right <= innerWidth;
+    }) && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth`),
+    true, 'doubling text and UI size keeps Chinese navigation, account and schedule available');
+  window.webContents.setZoomFactor(1);
+  await paint();
   assert.equal(await window.webContents.executeJavaScript(`
     document.querySelector('.inspector').getBoundingClientRect().top >= document.querySelector('.schedule').getBoundingClientRect().bottom
   `), true, 'Monitoring controls move below the results at the minimum width');

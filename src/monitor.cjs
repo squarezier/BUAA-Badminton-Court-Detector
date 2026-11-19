@@ -42,10 +42,14 @@ class CourtMonitor {
     });
     const verified = this.auth === 'signed-in' ? [...this.snapshots.values()].filter(snapshot => !snapshot.error) : [];
     const slots = verified.flatMap(snapshot => snapshot.slots).filter(slot => startsAt(slot) > now);
+    const rows = groupSlots(slots);
+    if (this.target) {
+      for (const row of rows) row.inTarget = matchesTarget(row, this.target);
+    }
     return {
       options: { ...this.options }, auth: this.auth, running: this.running,
       checking: Boolean(this.task && !this.task.signal.aborted), suspended: this.suspended,
-      nextAt: this.nextAt, lastAt: this.lastAt, slotCount: slots.length, rows: groupSlots(slots), venues,
+      nextAt: this.nextAt, lastAt: this.lastAt, slotCount: slots.length, rows, venues,
       delivery: { ...this.delivery },
     };
   }

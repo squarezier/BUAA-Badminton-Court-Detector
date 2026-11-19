@@ -192,8 +192,10 @@ function renderBookingLinks(venues) {
   }));
 }
 
-function renderTable(rows, venues) {
-  const fingerprint = JSON.stringify(rows);
+function renderTable(rows, venues, now) {
+  const today = isoDay.format(now);
+  const tomorrow = isoDay.format(now + 86400000);
+  const fingerprint = JSON.stringify([today, rows]);
   if (fingerprint === renderedRows) return;
   renderedRows = fingerprint;
   const body = get('rows');
@@ -201,6 +203,7 @@ function renderTable(rows, venues) {
   body.replaceChildren();
   let restoreFocus;
   let dateCell;
+  let previousInTarget = false;
   for (const slot of rows) {
     const row = body.insertRow();
     if (dateCell?.dataset.date !== slot.date) {
@@ -213,13 +216,24 @@ function renderTable(rows, venues) {
       const day = document.createElement('strong');
       day.textContent = slot.date.slice(5).replace('-', '/');
       const week = document.createElement('small');
-      week.textContent = weekday.format(new Date(`${slot.date}T12:00:00+08:00`));
+      const relative = slot.date === today ? '今天' : slot.date === tomorrow ? '明天' : '';
+      const dayOfWeek = weekday.format(new Date(`${slot.date}T12:00:00+08:00`));
+      week.textContent = [relative, dayOfWeek].filter(Boolean).join(' · ');
       dateCell.append(day, week);
       row.append(dateCell);
     } else {
       dateCell.rowSpan++;
     }
-    appendCell(row, `${slot.start}–${slot.end}`).className = 'slot-time';
+    const timeCell = appendCell(row, `${slot.start}–${slot.end}`);
+    timeCell.className = 'slot-time';
+    if (slot.inTarget) {
+      row.classList.add('in-target');
+      const label = document.createElement('small');
+      label.className = previousInTarget ? 'sr-only' : 'target-caption';
+      label.textContent = '目标时段';
+      timeCell.append(label);
+    }
+    previousInTarget = Boolean(slot.inTarget);
     const venue = venues.find(item => item.id === slot.venue);
     const link = document.createElement('button');
     link.type = 'button';
@@ -308,7 +322,7 @@ function render() {
   text('scope', range);
   get('read-error').hidden = !errors.length;
   text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error}`).join('\n'));
-  renderTable(rows, venues);
+  renderTable(rows, venues, now);
   get('empty').hidden = rows.length > 0;
   get('table-wrap').hidden = rows.length === 0;
   if (!rows.length) {

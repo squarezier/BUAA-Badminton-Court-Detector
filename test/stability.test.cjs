@@ -29,6 +29,20 @@ function setup(t, overrides = {}) {
   return monitor;
 }
 
+test('target markers follow the notification rule across both venues while all free courts remain visible', async t => {
+  const monitor = setup(t, {
+    options: { campus: 'xueyuanlu', interval: 2 },
+    async checkVenue(id) { return stamped(slot(1, id), { ...slot(2, id), start: '18:00', end: '19:00' }); },
+  });
+  await monitor.check();
+  monitor.setOptions({ ...monitor.options, targets: { xueyuanlu: { date: '2026-11-18', start: '17:30', end: '19:00' } } });
+  let rows = monitor.state().rows;
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.filter(row => row.inTarget).map(row => [row.venue, row.start]), [['38', '18:00'], ['39', '18:00']]);
+  monitor.setOptions({ ...monitor.options, targets: {} });
+  assert.ok(monitor.state().rows.every(row => !row.inTarget));
+});
+
 test('a rapid pause and restart waits for the aborted poll to settle', async t => {
   const first = deferred();
   let calls = 0;
