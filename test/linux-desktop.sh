@@ -42,11 +42,11 @@ case "$mode" in
     export GNOME_KEYRING_CONTROL="$XDG_RUNTIME_DIR/keyring"
     mkdir -m 700 "$GNOME_KEYRING_CONTROL"
     dbus-update-activation-environment XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR GNOME_KEYRING_CONTROL
-    gnome-keyring-daemon --foreground --components=secrets --control-directory="$GNOME_KEYRING_CONTROL" >"$qa_dir/keyring.log" 2>&1 &
+    printf '%s' 'isolated-fixture-password' | gnome-keyring-daemon --foreground --unlock \
+      --components=secrets --control-directory="$GNOME_KEYRING_CONTROL" >"$qa_dir/keyring.log" 2>&1 &
     vault_pid=$!
     trap 'kill "$vault_pid" 2>/dev/null || true' EXIT
     gdbus wait --session --timeout 15 org.freedesktop.secrets
-    printf '%s' 'isolated-fixture-password' | gnome-keyring-daemon --unlock --control-directory="$GNOME_KEYRING_CONTROL" >/dev/null
     gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
       --method org.freedesktop.Secret.Service.SetAlias default /org/freedesktop/secrets/collection/login >/dev/null
     printf '%s' 'isolated-fixture-value' | timeout 25s secret-tool store --label='Houyu test' fixture houyu-test
