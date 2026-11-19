@@ -74,25 +74,35 @@
 
       <section id="page-target" aria-labelledby="target-title" hidden>
         <header class="page-head"><div><h1 id="target-title">提醒目标</h1><p id="target-campus"></p></div></header>
-        <div class="form-sheet">
-          <div class="saved-strip"><div><span class="field-label">当前范围</span><strong id="saved-range"></strong><span id="saved-place"></span></div><button class="quiet" type="button" id="clear-target" hidden>移除目标</button></div>
-          <p class="warning" id="saved-note" hidden></p>
+        <div class="form-sheet split-sheet">
           <form id="target-form">
+            <h2 class="sheet-heading">选择时段</h2>
             <div class="form-row"><label for="target-date">日期</label><input id="target-date" type="date" aria-describedby="target-error" required></div>
             <div class="form-row"><label for="target-start">时段</label><div class="form-value">
               <div class="range-fields"><input id="target-start" type="time" aria-label="开始时间" required><span aria-hidden="true">—</span><input id="target-end" type="time" aria-label="结束时间" aria-describedby="target-error" required></div>
               <p class="field-note">按北京时间，场次须完整落在此时段内。</p>
             </div></div>
-            <div class="form-row coverage-row"><span class="field-label">场地</span><p id="target-coverage"></p></div>
             <p class="form-error" id="target-error" role="alert" hidden></p>
             <div class="form-foot"><button type="submit" class="button primary" id="save-target">保存目标</button></div>
           </form>
+          <aside class="saved-strip" aria-labelledby="saved-heading">
+            <h2 id="saved-heading">当前提醒范围</h2>
+            <strong id="saved-range"></strong><span id="saved-place"></span>
+            <div class="day-band" aria-hidden="true">
+              <svg viewBox="0 0 1440 12" preserveAspectRatio="none" focusable="false"><rect class="band-base" x="0" y="3" width="1440" height="6"></rect><rect id="band-range" x="0" y="2" width="1440" height="8"></rect><path d="M360 0v12 M720 0v12 M1080 0v12" class="band-ticks"></path></svg>
+              <div><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+            </div>
+            <p id="target-coverage"></p>
+            <p class="warning" id="saved-note" hidden></p>
+            <button class="quiet" type="button" id="clear-target" hidden>移除目标</button>
+          </aside>
         </div>
       </section>
 
       <section id="page-feishu" aria-labelledby="feishu-title" hidden>
         <header class="page-head"><div><h1 id="feishu-title">飞书通知</h1></div></header>
-        <div class="form-sheet push-sheet">
+        <div class="form-sheet split-sheet push-sheet">
+          <section class="connection-settings" aria-label="群机器人设置">
           <div class="connection-head"><h2>群机器人</h2><span class="status" id="push-status" data-tone="neutral">未连接</span></div>
           <p id="push-service" class="field-note" hidden></p>
           <form id="push-form" autocomplete="off" aria-describedby="connect-note">
@@ -109,6 +119,14 @@
           </div>
           <p id="storage-note" class="warning" hidden>系统安全存储不可用，本次连接仅在退出前有效。</p>
           <p class="feedback" id="push-feedback" role="status" hidden></p>
+          </section>
+          <aside class="message-preview" aria-labelledby="sample-heading">
+            <h2 id="sample-heading">群消息示例</h2>
+            <div class="message-card">
+              <div class="message-top"><strong id="preview-title"></strong><small>17:42 · 北京时间</small></div>
+              <div class="message-body"><strong id="preview-date"></strong><p id="preview-slot"></p><p>场号 <strong>3、5 号</strong>　·　¥25/场</p></div>
+            </div>
+          </aside>
         </div>
       </section>
     </main>

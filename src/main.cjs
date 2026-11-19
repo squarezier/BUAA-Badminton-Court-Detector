@@ -402,7 +402,7 @@ async function initialize() {
       : {};
   mainWindow = new BrowserWindow({
     ...nativeTitleBar,
-    width: 1130, height: 820, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
+    width: 1060, height: 720, minWidth: 760, minHeight: 630, title: productName, icon: ICON,
     show: false, backgroundColor: windowColors().color, autoHideMenuBar: true,
     webPreferences: { ...webPreferences, session: uiSession, preload: path.join(__dirname, 'preload.cjs') },
   });

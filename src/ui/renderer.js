@@ -105,6 +105,11 @@ function renderTarget(options, venues, now) {
   text('saved-range', range);
   text('shortcut-range', range);
   text('saved-place', place);
+  const minute = clock => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3));
+  const start = target ? minute(target.start) : 0;
+  const end = target ? minute(target.end) : target === null ? 0 : 1440;
+  get('band-range').setAttribute('x', String(start));
+  get('band-range').setAttribute('width', String(end - start));
   text('shortcut-place', place);
   text('saved-note', note);
   get('saved-note').hidden = !note;
@@ -338,6 +343,9 @@ function render() {
   }
 
   const legacyService = { pushplus: 'PushPlus', serverchan: 'Server酱' }[current.pushService];
+  text('preview-title', `候羽｜${campusNames[options.campus]}疑似退订 2 场次`);
+  text('preview-date', shortDay(isoDay.format(now + 86400000)));
+  text('preview-slot', `18:00–19:00 · ${venues[0]?.label ?? '羽毛球馆'}`);
   const pushNeedsAttention = delivery.status === 'blocked' || (delivery.persistent && !delivery.configured);
   const pushStatus = legacyService ? '待切换' : pushNeedsAttention ? '需检查配置' : delivery.configured ? '已连接' : '未连接';
   get('push-service').hidden = !legacyService;

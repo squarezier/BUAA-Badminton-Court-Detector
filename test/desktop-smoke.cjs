@@ -194,7 +194,7 @@ async function run() {
     if (!Object.hasOwn(assets, item)) return new Response('Not found', { status: 404 });
     return new Response(await fs.readFile(path.join(source, 'ui', item.slice(1))), { headers: { 'content-type': `${assets[item]}; charset=utf-8` } });
   });
-  const window = new BrowserWindow({ width: 1130, height: 820, useContentSize: true, show: false, webPreferences: { ...preferences, preload: path.join(source, 'preload.cjs') } });
+  const window = new BrowserWindow({ width: 1060, height: 720, useContentSize: true, show: false, webPreferences: { ...preferences, preload: path.join(source, 'preload.cjs') } });
   await window.loadURL('courtwatch://app/index.html');
   await window.webContents.insertCSS('* { transition: none !important; }', { cssOrigin: 'user' });
   await window.webContents.executeJavaScript("Date.now = () => Date.parse('2026-11-18T14:08:00+08:00'); window.dispatchEvent(new Event('focus'))");
@@ -286,6 +286,9 @@ async function run() {
     document.querySelector('#target-start').value, document.querySelector('#target-end').value,
     document.querySelector('#target-coverage').textContent,
   ]`), [false, '2026-11-20', '18:00', '20:00', '主馆、训练馆 · 全部场号']);
+  assert.deepEqual(await js(`[document.querySelector('#band-range').getAttribute('x'), document.querySelector('#band-range').getAttribute('width'),
+    document.querySelector('.saved-strip').getBoundingClientRect().left >= document.querySelector('#target-form').getBoundingClientRect().right]`),
+    ['1080', '120', true], 'the saved range spans two hours and sits beside its editor');
   await capture('target.png', '#page-target .form-sheet');
   await window.webContents.executeJavaScript("document.querySelector('[data-page=feishu]').click()");
   await paint();
@@ -297,11 +300,14 @@ async function run() {
   window.webContents.send('courtwatch:state', disconnected);
   await paint();
   assert.equal(await js("document.querySelector('#push-status').textContent"), '未连接');
+  assert.equal(await js("document.querySelector('.message-preview').getBoundingClientRect().left >= document.querySelector('.connection-settings').getBoundingClientRect().right"), true);
+  assert.equal(await js("document.querySelector('#preview-title').textContent"), '候羽｜学院路校区疑似退订 2 场次');
   await capture('feishu.png', '.push-sheet');
   window.setContentSize(740, 600);
   await paint();
   const viewportFit = () => window.webContents.executeJavaScript("innerWidth <= 760 && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.workspace').scrollWidth <= document.querySelector('.workspace').clientWidth");
   assert.equal(await viewportFit(), true, 'Feishu page fits the minimum width');
+  assert.equal(await js("document.querySelector('.message-preview').getBoundingClientRect().top >= document.querySelector('.connection-settings').getBoundingClientRect().bottom"), true);
   await window.webContents.executeJavaScript("document.querySelector('[data-page=target]').click()");
   await paint();
   assert.equal(await viewportFit(), true, 'Target editor fits the minimum width');
