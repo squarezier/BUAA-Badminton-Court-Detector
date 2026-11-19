@@ -6,7 +6,7 @@ const { mkdirSync } = require('node:fs');
 const path = require('node:path');
 const { productName, version } = require('../package.json');
 const {
-  CAMPUS_ORIGIN, LOGIN_URL, VENUES, venueUrl, validOptions, validTarget, targetFields,
+  CAMPUS_ORIGIN, LOGIN_URL, CAMPUSES, VENUES, venueUrl, validOptions, validTarget, targetFields,
   calendarDates, beijingClock, validatedSnapshot,
 } = require('./courts.cjs');
 const { signedInOnBookingSite, readBookingPage } = require('./site-page.cjs');
@@ -25,13 +25,21 @@ const appFiles = new Map([
   ['/index.html', 'text/html; charset=utf-8'], ['/styles.css', 'text/css; charset=utf-8'],
   ['/renderer.js', 'text/javascript; charset=utf-8'], ['/icon.png', 'image/png'],
 ]);
-const webPreferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false };
+const webPreferences = { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false, spellcheck: false, webviewTag: false };
 let mainWindow, campusWindow, tray, campusSession, uiSession, monitor, prefs;
 let exiting = false;
 let sending = false;
 let editing = false;
 let changingConnection = false;
 const nextPushTestAt = new Map();
+
+// Check before creating any window, session, or opening the system vault.
+if (app.isPackaged) {
+  const unsafeSwitches = ['remote-debugging-port', 'remote-debugging-pipe', 'no-sandbox', 'disable-web-security',
+    'ignore-certificate-errors', 'ignore-certificate-errors-spki-list', 'ssl-key-log-file', 'log-net-log'];
+  if (unsafeSwitches.some(name => app.commandLine.hasSwitch(name)) || process.env.SSLKEYLOGFILE ||
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') app.exit(1);
+}
 
 // Electron uses its internal app name for the macOS Keychain service.
 // Keep that identity and the profile path for settings saved by older releases.
@@ -72,6 +80,7 @@ function noPermissions(target) {
   target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   target.setPermissionCheckHandler(() => false);
   target.on('will-download', event => event.preventDefault());
+  target.setDevicePermissionHandler(() => false);
 }
 
 async function appResponse(request) {
@@ -130,7 +139,7 @@ function publish(state) {
 }
 
 function viewState(state) {
-  return { ...state, pushService: prefs.connection?.provider ?? null };
+  return { ...state, pushService: prefs.provider };
 }
 
 async function execute(win, action, argument) {
@@ -161,6 +170,7 @@ async function readVenue(id, signal) {
     verifyDestination();
     const result = await execute(win, readBookingPage, {
       bookableLabels: [...calendarDates(started).keys()], nowClock: beijingClock(started),
+      venueName: CAMPUSES[VENUES[id].campus].label + VENUES[id].label.replace('（副馆）', ''),
     });
     signal.throwIfAborted();
     verifyDestination();
@@ -168,7 +178,7 @@ async function readVenue(id, signal) {
     if (result?.error === 'layout' || !result?.days) {
       throw new UserError('官网时段表暂不可读，请稍后重试。');
     }
-    return validatedSnapshot(id, result.days, started);
+    return validatedSnapshot(id, result.days, started, result.unread);
   } catch (error) {
     if (error instanceof UserError || signal.aborted) throw error;
     if (!win.isDestroyed() && onCampusLogin(win.webContents.getURL())) throw new UserError('北航会话已失效，请重新登录。', 'auth');
@@ -263,32 +273,41 @@ async function openCampus(url, login) {
 }
 
 async function dispatch(message, signal) {
-  if (!prefs.connection) return { kind: 'blocked', text: '请先连接飞书群机器人。' };
+  if (!prefs.provider) return { kind: 'blocked', text: '请先连接飞书群机器人。' };
   if (sending || changingConnection) return { kind: 'retry', text: '另一条通知正在处理，下一轮会再检查。' };
   sending = true;
-  try { return await sendPush(prefs.connection, message, signal); }
+  try {
+    const connection = await prefs.readConnection();
+    if (signal?.aborted) return { kind: 'cancelled' };
+    return await sendPush(connection, message, signal);
+  } catch {
+    return { kind: 'retry', retryAfterMs: 60000, text: '系统安全存储暂时无法解锁，下次核验到场地后重试。' };
+  }
   finally { sending = false; }
 }
 
-async function storePushConnection(connection) {
-  const persistent = await prefs.saveConnection(connection);
+async function storePushConnection(connection, sessionOnly = false) {
+  const persistent = await prefs.saveConnection(connection, sessionOnly);
   monitor.setDelivery(Boolean(connection), persistent);
 }
 
-async function testPushConnection(candidate) {
-  const saved = prefs.connection;
-  const connection = candidate ?? saved;
-  if (!connection) throw new UserError('请先连接飞书群机器人。');
+async function testPushConnection(candidate, sessionOnly = false) {
   if (sending || changingConnection) throw new UserError('通知正在处理，请稍候。');
-  const now = Date.now();
-  const { provider } = connection;
-  const sameDestination = !candidate || (saved?.provider === 'feishu' && candidate.webhook === saved.webhook);
-  const nextTest = nextPushTestAt.get(provider) ?? 0;
-  if (now < Math.max(nextTest, sameDestination ? monitor.pushNotBefore : 0)) {
-    throw new UserError('通知服务暂缓接收测试，请稍后再试。');
-  }
   changingConnection = true;
   try {
+    let saved;
+    if (prefs.provider) {
+      try { saved = await prefs.readConnection(); }
+      catch { if (!candidate) throw new UserError('系统安全存储暂时无法解锁。'); }
+    }
+    const connection = candidate ?? saved;
+    if (!connection) throw new UserError('请先连接飞书群机器人。');
+    const now = Date.now();
+    const { provider } = connection;
+    const sameDestination = !candidate || (saved?.provider === 'feishu' && candidate.webhook === saved.webhook);
+    if (now < Math.max(nextPushTestAt.get(provider) ?? 0, sameDestination ? monitor.pushNotBefore : 0)) {
+      throw new UserError('通知服务暂缓接收测试，请稍后再试。');
+    }
     nextPushTestAt.set(provider, now + 15000);
     const result = await sendPush(connection, testNotice(now));
     if (result.kind === 'retry') {
@@ -297,8 +316,8 @@ async function testPushConnection(candidate) {
     if (candidate) {
       if (result.kind === 'retry') throw new UserError('这次测试暂未发送成功，请稍后再试。');
       if (result.kind !== 'accepted') throw new UserError(result.text);
-      if (!sameDestination || candidate.secret !== saved?.secret || !prefs.encrypted) {
-        try { await storePushConnection(connection); }
+      if (!sameDestination || candidate.secret !== saved?.secret || sessionOnly || !prefs.encrypted) {
+        try { await storePushConnection(connection, sessionOnly); }
         catch { throw new UserError('飞书已受理测试。配置保存失败，请检查系统安全存储后重试。'); }
       }
     }
@@ -364,9 +383,19 @@ function setupIpc() {
   handle('push-connect', value => {
     const connection = feishuConnection(value);
     if (!connection) throw new UserError('请填写飞书自定义机器人的 Webhook，并检查签名密钥格式。');
-    return testPushConnection(connection);
+    return testPushConnection(connection, value.sessionOnly === true);
   });
   handle('push-test', () => testPushConnection());
+  handle('push-unlock', async () => {
+    if (!prefs.encrypted || prefs.provider) return;
+    if (sending || changingConnection) throw new UserError('通知正在处理，请稍候。');
+    changingConnection = true;
+    try {
+      await prefs.readConnection();
+      monitor.setDelivery(true, true);
+    } catch { throw new UserError('系统安全存储暂时无法解锁。'); }
+    finally { changingConnection = false; }
+  });
   handle('push-disconnect', async () => {
     if (sending || changingConnection) throw new UserError('通知正在处理，请稍候。');
     changingConnection = true;
@@ -377,19 +406,27 @@ function setupIpc() {
 }
 
 async function initialize() {
-  campusSession = session.fromPartition('buaa-session');
-  uiSession = session.fromPartition('courtwatch-ui');
+  campusSession = session.fromPartition('buaa-session', { cache: false });
+  uiSession = session.fromPartition('courtwatch-ui', { cache: false });
   noPermissions(campusSession);
   noPermissions(uiSession);
   campusSession.webRequest.onBeforeRequest((details, callback) => {
-    const allowed = details.resourceType === 'mainFrame' ? campusPage(details.url) : campusResource(details.url);
+    const passiveAsset = details.method === 'GET' && ['image', 'font', 'stylesheet', 'media'].includes(details.resourceType);
+    const allowed = campusPage(details.url) || (passiveAsset && campusResource(details.url));
     callback({ cancel: !allowed });
+  });
+  campusSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = details.requestHeaders;
+    if (!campusPage(details.url)) {
+      for (const name of Object.keys(headers)) if (/^(?:cookie|authorization|referer)$/i.test(name)) delete headers[name];
+    }
+    callback({ requestHeaders: headers });
   });
   await uiSession.protocol.handle('courtwatch', appResponse);
   prefs = new Preferences(path.join(app.getPath('userData'), 'settings.json'), safeStorage);
   await prefs.load();
   monitor = new CourtMonitor({ options: prefs.options, checkVenue: readVenue, dispatch, onChange: publish });
-  monitor.setDelivery(Boolean(prefs.connection), Boolean(prefs.encrypted), prefs.warning);
+  monitor.setDelivery(Boolean(prefs.provider), Boolean(prefs.encrypted), prefs.warning);
   setupIpc();
 
   const windowColors = () => nativeTheme.shouldUseDarkColors

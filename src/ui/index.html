@@ -109,15 +109,17 @@
             <p class="push-instructions">飞书群设置 → 群机器人 → 添加自定义机器人 <button type="button" class="quiet" id="push-guide" aria-label="打开飞书官方设置指南">指南 ↗</button></p>
             <div class="form-row"><label for="feishu-webhook">Webhook</label><input type="password" id="feishu-webhook" maxlength="256" placeholder="粘贴机器人地址" autocomplete="off" spellcheck="false" required></div>
             <div class="form-row"><label for="feishu-secret">签名密钥</label><input type="password" id="feishu-secret" maxlength="256" placeholder="开启签名校验时填写" autocomplete="off" spellcheck="false"></div>
+            <label class="session-choice"><input type="checkbox" id="feishu-session-only">仅本次使用，退出即清除</label>
             <p class="field-note" id="connect-note">连接时会向这个群发送一条测试消息。</p>
             <div class="form-foot"><button type="submit" class="button primary" id="push-connect">连接并测试</button><button type="button" class="quiet" id="cancel-replace" hidden>取消</button></div>
           </form>
           <div class="push-actions" id="push-actions" hidden>
+            <button type="button" class="button" id="push-unlock" hidden>重新解锁</button>
             <button type="button" class="button" id="push-test" disabled>发送测试</button>
             <button type="button" class="quiet" id="replace-connection" hidden>更换机器人</button>
             <button type="button" class="quiet danger" id="remove-connection">断开连接</button>
           </div>
-          <p id="storage-note" class="warning" hidden>系统安全存储不可用，本次连接仅在退出前有效。</p>
+          <p id="storage-note" class="field-note" hidden>本次连接在退出后清除。</p>
           <p class="feedback" id="push-feedback" role="status" hidden></p>
           </section>
           <aside class="message-preview" aria-labelledby="sample-heading">

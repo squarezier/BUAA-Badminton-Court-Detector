@@ -53,9 +53,14 @@ function runPushAction(action) {
   });
 }
 
+function clearConnectionInputs() {
+  get('feishu-webhook').value = '';
+  get('feishu-secret').value = '';
+}
+
 function showPage(page) {
   if (page !== 'feishu') {
-    get('push-form').reset();
+    clearConnectionInputs();
     replacingConnection = false;
     pushError = '';
     if (current) render();
@@ -282,7 +287,7 @@ function render() {
   if (Number.isFinite(nextExpiry)) expiryTimer = setTimeout(render, Math.min(2147483647, nextExpiry - now + 10));
   const slotCount = rows.reduce((total, row) => total + row.courts.length, 0);
   const signedIn = auth === 'signed-in';
-  const errors = venues.filter(venue => venue.error);
+  const errors = venues.filter(venue => venue.error || venue.unreadDates?.length);
   const verifiedVenues = signedIn ? venues.filter(venue => venue.at && !venue.error) : [];
   const anyResult = verifiedVenues.length > 0;
   const accountLabels = { opening: '等待官网登录', expired: '登录已失效', 'signed-in': '已登录', 'signed-out': '尚未登录' };
@@ -326,7 +331,7 @@ function render() {
   const range = dates.length > 1 ? `${showDate(dates[0])}–${showDate(dates.at(-1))}` : dates[0] ? showDate(dates[0]) : '';
   text('scope', range);
   get('read-error').hidden = !errors.length;
-  text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error}`).join('\n'));
+  text('read-error', errors.map(venue => `${venueName(venue)} · ${venue.error || venue.unreadDates.map(showDate).join('、') + '的时段表待核验'}`).join('\n'));
   renderTable(rows, venues, now);
   get('empty').hidden = rows.length > 0;
   get('table-wrap').hidden = rows.length === 0;
@@ -356,6 +361,7 @@ function render() {
   get('push-connect').disabled = busy;
   get('feishu-webhook').disabled = busy;
   get('feishu-secret').disabled = busy;
+  get('feishu-session-only').disabled = busy;
   const connected = delivery.configured && current.pushService === 'feishu';
   get('push-form').hidden = connected && !replacingConnection;
   get('cancel-replace').hidden = !connected || !replacingConnection;
@@ -364,6 +370,8 @@ function render() {
   get('replace-connection').disabled = busy;
   get('push-actions').hidden = (!delivery.configured && !delivery.persistent) || (connected && replacingConnection);
   get('push-test').hidden = !delivery.configured;
+  get('push-unlock').hidden = delivery.configured || !delivery.persistent;
+  get('push-unlock').disabled = busy;
   get('push-test').disabled = busy;
   text('push-test', legacyService ? '测试当前渠道' : '发送测试');
   get('remove-connection').disabled = busy;
@@ -425,7 +433,7 @@ if (!app) {
     get('feishu-webhook').focus();
   });
   get('cancel-replace').addEventListener('click', () => {
-    get('push-form').reset();
+    clearConnectionInputs();
     replacingConnection = false;
     pushError = '';
     render();
@@ -433,11 +441,12 @@ if (!app) {
   });
   get('push-form').addEventListener('submit', event => {
     event.preventDefault();
-    const form = event.currentTarget;
-    const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value };
-    void runPushAction(async () => { await app.connectPush(connection); form.reset(); replacingConnection = false; });
+    const connection = { webhook: get('feishu-webhook').value, secret: get('feishu-secret').value, sessionOnly: get('feishu-session-only').checked };
+    clearConnectionInputs();
+    void runPushAction(async () => { await app.connectPush(connection); replacingConnection = false; });
   });
-  get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); get('push-form').reset(); replacingConnection = false; showToast('通知连接已断开。'); }));
+  get('remove-connection').addEventListener('click', () => runPushAction(async () => { await app.disconnectPush(); clearConnectionInputs(); replacingConnection = false; showToast('通知连接已断开。'); }));
+  get('push-unlock').addEventListener('click', () => runPushAction(app.unlockPush));
   get('push-test').addEventListener('click', () => runPushAction(app.testPush));
   app.onState(receive);
   app.state().then(state => { if (!current) receive(state); }).catch(() => showToast('桌面服务无法连接，请重新打开应用。'));

@@ -7,6 +7,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, powerMonitor, safeStorage, session } = require('electron');
 const { beijingDay, calendarDates } = require('../src/courts.cjs');
+const { Preferences } = require('../src/preferences.cjs');
+const nativeVault = Object.fromEntries(['isAsyncEncryptionAvailable', 'encryptStringAsync', 'decryptStringAsync']
+  .map(method => [method, safeStorage[method].bind(safeStorage)]));
 
 const profile = path.resolve(process.argv.at(-1));
 const legacyToken = 'SCTtest-houyu-local-token-01';
@@ -20,6 +23,7 @@ let testClockOffset = Date.parse(`${beijingDay(wallClock())}T13:10:00+08:00`) - 
 Date.now = () => wallClock() + testClockOffset;
 const label = [...calendarDates(Date.now()).keys()][1];
 let rejectSignature = false;
+let vaultLocked = true;
 let pushRequests = 0;
 let visibleCourts = [1];
 let expired = false;
@@ -36,8 +40,9 @@ const settings = path.join(profile, 'settings.json');
 fs.writeFileSync(settings, JSON.stringify({
   version: 1, options: { campus: 'shahe', interval: 2 }, encryptedToken: legacyCiphertext.toString('base64'),
 }), { mode: 0o600 });
-safeStorage.isAsyncEncryptionAvailable = async () => true;
+safeStorage.isAsyncEncryptionAvailable = async () => !vaultLocked;
 safeStorage.decryptStringAsync = async value => {
+  if (value.equals(feishuCiphertext)) return { result: JSON.stringify({ provider: 'feishu', webhook, secret }) };
   assert.deepEqual(value, legacyCiphertext);
   return { result: legacyToken };
 };
@@ -67,7 +72,7 @@ global.fetch = async (url, request) => {
 function venuePage() {
   const rows = [1, 2, 3, 4].map(id => {
     const state = visibleCourts.includes(id) ? 'free' : id === 2 ? 'reservation' : 'reserved';
-    return `<tr><td>${id}号</td><td><div class="reserveBlock ${state}">￥15.00</div></td></tr>`;
+    return `<tr><td>${id}号</td><td><div class="reserveBlock ${state}">${state === 'free' ? '￥15.00' : state === 'reserved' ? '已售' : ''}</div></td></tr>`;
   });
   const grid = `<tr><td>场地</td><td>07:00-08:00</td></tr>${rows.join('')}`;
   const update = changeVenueWhileReading ? `<script>setTimeout(() => {
@@ -107,6 +112,18 @@ function fail(error) { process.stderr.write(`${error.stack}\n`); app.exit(1); }
 
 async function run(win) {
   await mocked;
+  if (process.platform === 'win32') {
+    const file = path.join(profile, 'dpapi-fixture.json');
+    const connection = { provider: 'feishu', webhook, secret };
+    const store = new Preferences(file, nativeVault);
+    assert.equal(await store.saveConnection(connection), true);
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /open\.feishu\.cn|synthetic-feishu/);
+    const reopened = new Preferences(file, nativeVault);
+    await reopened.load();
+    assert.deepEqual(await reopened.readConnection(), connection);
+    assert.equal(reopened.sessionConnection, null);
+    cases++;
+  }
   const js = code => win.webContents.executeJavaScript(code);
   const state = () => js('window.courtWatch.state()');
   async function click(selector) {
@@ -124,6 +141,12 @@ async function run(win) {
     throw new Error(`Timed out: ${description}`);
   }
   const wake = () => { powerMonitor.emit('suspend'); powerMonitor.emit('resume'); };
+  const campus = session.fromPartition('buaa-session');
+  assert.notEqual(campus, win.webContents.session);
+  assert.equal(campus.getStoragePath(), null);
+  assert.equal(win.webContents.session.getStoragePath(), null);
+  assert.equal(await js("typeof window.require === 'undefined' && typeof window.process === 'undefined' && !customElements.get('webview')"), true);
+  cases++;
 
   assert.equal(await js("getComputedStyle(document.querySelector('.window-bar')).getPropertyValue('app-region')"), 'drag');
   assert.equal(await js("document.querySelector('.window-bar').getBoundingClientRect().bottom <= document.querySelector('#monitor-action').getBoundingClientRect().top"), true);
@@ -158,17 +181,30 @@ async function run(win) {
     document.querySelector('#push-form').requestSubmit();
   `);
   const storedCiphertext = () => JSON.parse(fs.readFileSync(settings, 'utf8')).encryptedToken;
+  assert.equal((await state()).delivery.configured, false, 'a locked startup never selects a plaintext fallback');
+  await click('#push-unlock');
+  await waitFor(async () => (await feedback()).includes('暂时无法解锁'), 'system vault stays locked');
+  vaultLocked = false;
+  await click('#push-unlock');
+  await waitFor(view => view.delivery.configured && view.pushService === 'serverchan', 'unlock the original destination in place');
+  assert.equal(pushRequests, 0, 'unlocking a saved connection sends no message');
+  cases++;
   assert.equal((await state()).pushService, 'serverchan', 'an existing WeChat channel is loaded on upgrade');
   await submitConnection(webhook.replace('open.feishu.cn', 'example.invalid'));
   await waitFor(async () => (await feedback()).includes('请填写飞书'), 'webhook validation');
   assert.equal(pushRequests, 0);
   assert.equal(storedCiphertext(), legacyCiphertext.toString('base64'));
   rejectSignature = true;
+  await click('#feishu-session-only');
   await submitConnection(webhook);
   const retained = await waitFor(async () => (await feedback()).includes('签名校验失败'), 'rejected Feishu connection');
+  assert.deepEqual(await js("[document.querySelector('#feishu-webhook').value, document.querySelector('#feishu-secret').value]"), ['', '']);
+  assert.doesNotMatch(JSON.stringify(retained), /open\.feishu\.cn|synthetic-feishu/);
   assert.equal(retained.pushService, 'serverchan');
   assert.equal(storedCiphertext(), legacyCiphertext.toString('base64'));
   assert.equal(pushRequests, 1);
+  assert.equal(await js("document.querySelector('#feishu-session-only').checked"), true, 'retry preserves the privacy choice');
+  await click('#feishu-session-only');
   cases++;
 
   testClockOffset += 16000;
@@ -201,6 +237,12 @@ async function run(win) {
   win.close();
   assert.equal(win.isVisible(), false);
   visibleCourts = [1, 2, 4];
+  vaultLocked = true;
+  wake();
+  await waitFor(view => !view.checking && view.delivery.status === 'retry' && view.slotCount === 3, 'a locked vault defers an eligible cancellation');
+  assert.equal(pushed.length, 1);
+  vaultLocked = false;
+  testClockOffset += 61000;
   wake();
   await waitFor(view => view.slotCount === 3 && !view.checking && pushed.length === 2, 'only reopened slots are sent while hidden');
   assert.equal(pushed[1].title, '候羽｜沙河校区疑似退订 1 场次');
@@ -246,9 +288,11 @@ async function run(win) {
   cases++;
 
   await click('#open-booking');
-  const bookingPage = await waitFor(() => BrowserWindow.getAllWindows().find(page =>
+  const bookingWindow = () => BrowserWindow.getAllWindows().find(page =>
     page !== win && page.webContents.getURL() === `${campusOrigin}/venue/venue-reservation/57`
-  ), 'official booking window');
+  );
+  await waitFor(bookingWindow, 'official booking window');
+  assert.equal(await bookingWindow().webContents.executeJavaScript("typeof window.courtWatch === 'undefined' && typeof window.require === 'undefined' && typeof window.process === 'undefined'"), true);
   assert.equal((await state()).auth, 'signed-in');
   expired = true;
   wake();
@@ -342,16 +386,29 @@ async function run(win) {
   await click('[data-page=monitor]');
   cases++;
 
+  const fakeCookie = { url: campusOrigin, name: 'fixture-session', value: 'isolated-fake-school-state', secure: true, httpOnly: true };
+  await campus.cookies.set(fakeCookie);
+  assert.equal((await campus.cookies.get({ name: fakeCookie.name })).length, 1);
+  assert.equal((await win.webContents.session.cookies.get({ name: fakeCookie.name })).length, 0);
   await click('#account-action');
   const signedOut = await waitFor(view => view.auth === 'signed-out', 'explicit sign-out');
   assert.equal(signedOut.delivery.configured, true);
+  await waitFor(async () => !(await campus.cookies.get({ name: fakeCookie.name })).length, 'explicit logout clears school cookies');
   cases++;
 
   await click('[data-page=feishu]');
+  testClockOffset += 16000;
+  await click('#replace-connection');
+  await click('#feishu-session-only');
+  await submitConnection(webhook);
+  await waitFor(view => view.delivery.configured && !view.delivery.persistent && view.delivery.status === 'accepted', 'replace disk-backed connection with a session-only connection');
+  assert.equal(storedCiphertext(), null);
+  assert.equal(pushed.length, 4);
+  cases++;
   await click('#remove-connection');
   await waitFor(view => !view.delivery.configured && view.pushService === null, 'disconnect notification provider');
   assert.equal(storedCiphertext(), null);
-  assert.equal(pushed.length, 3);
+  assert.equal(pushed.length, 4);
   cases++;
 
   clearTimeout(deadline);

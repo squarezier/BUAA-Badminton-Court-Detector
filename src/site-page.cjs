@@ -8,7 +8,7 @@ function signedInOnBookingSite() {
   return authenticated;
 }
 
-async function readBookingPage({ bookableLabels, nowClock }) {
+async function readBookingPage({ bookableLabels, nowClock, venueName = '' }) {
   const todayLabel = bookableLabels[0];
   const bookable = new Set(bookableLabels);
   const timePattern = /\b(\d{2}:\d{2})\s*[-–—~～]\s*(\d{2}:\d{2})\b/;
@@ -46,15 +46,29 @@ async function readBookingPage({ bookableLabels, nowClock }) {
     if (!times.length || times.some((range, index) => !range || !range.every(validClock) ||
         mins(range[0]) >= mins(range[1]) || (index > 0 && times[index - 1][1] !== range[0]))) return null;
     const courtRows = [...table.rows].filter(row => /^\s*\d+号\s*$/.test(row.cells[0]?.innerText ?? ''));
-    if (!courtRows.length || courtRows.some(row => row.cells.length !== times.length + 1)) return null;
+    const numbers = new Set(courtRows.map(row => Number.parseInt(row.cells[0].innerText, 10)));
+    if (!courtRows.length || numbers.size !== courtRows.length || [...numbers].some(number => number < 1 || number > 120) ||
+        courtRows.some(row => row.cells.length !== times.length + 1) ||
+        [...table.rows].some(row => row.querySelector('.reserveBlock') && !courtRows.includes(row))) return null;
     const slots = [];
     const reserved = [];
     let colorConflict = false;
+    let allAdministrative = true;
     for (const row of courtRows) {
       const court = Number.parseInt(row.cells[0].innerText, 10);
       for (const [index, cell] of [...row.cells].slice(1).entries()) {
-        const block = cell.querySelector('.reserveBlock');
-        if (!block) return null;
+        const blocks = cell.querySelectorAll('.reserveBlock');
+        if (blocks.length !== 1) return null;
+        const block = blocks[0];
+        const displayed = block.innerText.trim();
+        // The school also uses hourly cells for closures and named activities.
+        // They cannot establish a paid booking or a cancellation.
+        const administrative = /活动|占用|教学|比赛|维修|维护|闭馆|停用|暂停开放/.test(displayed);
+        if (administrative) {
+          if (!visible(block)) allAdministrative = false;
+          continue;
+        }
+        allAdministrative = false;
         const booked = block.classList.contains('reserved');
         const otherwiseUnavailable = block.matches('.reservation, .disabled, [disabled], [aria-disabled="true"]');
         const unavailable = booked || otherwiseUnavailable;
@@ -66,18 +80,25 @@ async function readBookingPage({ bookableLabels, nowClock }) {
         if (available !== green) colorConflict = true;
         const [start, end] = times[index];
         // The site uses "reservation" for unpaid holds and "reserved" for bookings.
-        if (booked && shown && !free && !otherwiseUnavailable) {
+        if (booked && shown && !free && !otherwiseUnavailable && /^(?:已售|已预约|已预订)$/.test(displayed)) {
           reserved.push({ court, start, end });
         }
         if (!available || !green) continue;
-        const amount = block.innerText.trim().match(/^[¥￥]\s*(\d+(?:\.\d{1,2})?)$/);
-        const freeOfCharge = /^免费$/.test(block.innerText.trim());
+        const amount = displayed.match(/^[¥￥]\s*(\d+(?:\.\d{1,2})?)$/);
+        const freeOfCharge = displayed === '免费';
         if (!amount && !freeOfCharge) return null;
         slots.push({ court, start, end, price: freeOfCharge ? 0 : Number(amount[1]) });
       }
     }
+    const footer = table.rows[table.rows.length - 1];
+    const mirrored = footer !== header && footer.cells.length === header.cells.length &&
+      times.every(([start, end], index) => {
+        const match = footer.cells[index + 1].innerText.match(timePattern);
+        return match?.[1] === start && match[2] === end;
+      });
     return {
-      date: activeDate(), times, slots, reserved, colorConflict,
+      date: activeDate(), times, slots, reserved, colorConflict, allAdministrative,
+      mirrored,
       first: times[0][0], last: times.at(-1)[1],
       back: header.querySelector('.ivu-icon-ios-arrow-back'),
       forward: header.querySelector('.ivu-icon-ios-arrow-forward'),
@@ -105,7 +126,7 @@ async function readBookingPage({ bookableLabels, nowClock }) {
     return readWindow() ?? (closedMessage() ? { closed: true } : null);
   }
 
-  async function afterTimetableChange(button, readFrame) {
+  async function afterTimetableChange(button, readFrame, paging = false) {
     const timetableData = '.reserveBlock, .ivu-table-tip';
     let changedAt = null;
     let wasBusy = false;
@@ -115,6 +136,13 @@ async function readBookingPage({ bookableLabels, nowClock }) {
       .filter(name => ['free', 'reservation', 'reserved', 'disabled'].includes(name)).sort().join(' ');
     const changedData = change => {
       const target = change.target.nodeType === 1 ? change.target : change.target.parentElement;
+      const timetable = target?.closest('.spaceTable');
+      if (!timetable || !visible(timetable)) {
+        // A framework may replace the entire visible timetable at its parent.
+        return change.type === 'childList' && [...change.addedNodes].some(node =>
+          node.nodeType === 1 && [node, ...node.querySelectorAll('.spaceTable')].some(child =>
+            child.matches('.spaceTable') && visible(child) && child.querySelector(timetableData)));
+      }
       if (change.type !== 'attributes') {
         return target?.closest(timetableData) || [...change.addedNodes, ...change.removedNodes].some(affectsTimetable);
       }
@@ -141,9 +169,25 @@ async function readBookingPage({ bookableLabels, nowClock }) {
     observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
       attributeOldValue: true, attributeFilter: ['class', 'style', 'disabled', 'aria-disabled', 'hidden'] });
     try {
+      const before = performance.now();
       button.click();
       // Tabs and time headers can change before the reservation cells do.
-      return await waitFor(() => !trackLoading() && changedAt !== null && performance.now() - changedAt >= 120 && readFrame());
+      const frame = await waitFor(() => {
+        if (trackLoading()) return null;
+        if (changedAt !== null) return performance.now() - changedAt >= 120 && readFrame();
+        // The official same-day pager slices an already loaded grid. Vue can
+        // reuse every cell when two sold-out windows have identical contents.
+        // Both independent hour rows must agree. A reused green is never moved.
+        if (!paging || performance.now() - before < 1800) return null;
+        const view = readFrame();
+        return view?.mirrored && !view.colorConflict && !view.slots.length ? view : null;
+      });
+      if (frame || paging) return frame;
+      // If the site's date request is still outstanding, clicking another date
+      // can let the older response populate the newly selected tab.
+      const populated = [...document.querySelectorAll('.spaceTable table')].some(table =>
+        visible(table) && table.querySelector('.reserveBlock'));
+      return { error: 'layout', unsettled: changedAt === null || busy() || !populated };
     } finally { observer.disconnect(); }
   }
 
@@ -159,27 +203,35 @@ async function readBookingPage({ bookableLabels, nowClock }) {
     const hours = operatingHours();
     if (!dateButtons().length || !hours) return false;
     // After closing the selected day can have no grid and no closure message.
-    return (activeDate() === todayLabel && nowClock >= hours[1]) || readWindow() || closedMessage();
+    return (activeDate() === todayLabel && nowClock >= hours[1]) || readWindow() || closedMessage() ||
+      (activeDate() && !busy() && document.querySelector('.spaceTable table .reserveBlock'));
   }, 9000);
   if (!loaded) return { error: 'layout' };
   const [opening, closing] = operatingHours();
   const labels = dateButtons().map(labelOf);
   if (labels.length > bookable.size || ![opening, closing, nowClock].every(validClock) || mins(opening) >= mins(closing)) return { error: 'layout' };
-  const days = [];
+  // The official notice disappears automatically. Keep only matching date labels.
+  const fullDayClosures = new Set();
+  if (venueName) {
+    const notice = [...document.querySelectorAll('.proContent, .proContentApp')].filter(visible)
+      .map(element => element.innerText.replace(/\s/g, '')).join('。');
+    for (const match of notice.matchAll(/(\d{1,2})月(\d{1,2})日(?:[（(](?:周|星期)[一二三四五六日天][）)])?([^。；，、\d：:]{2,36}?)羽毛球场地(?:全天)?暂停对外开放[。！]/g)) {
+      if (match[3] === venueName) fullDayClosures.add(`${Number(match[1])}月${Number(match[2])}日`);
+    }
+  }
 
-  for (const label of labels) {
+  async function scanDay(label) {
     if (label === todayLabel && mins(nowClock) >= mins(closing)) {
-      days.push({ label, slots: [], reserved: [] });
-      continue;
+      return { label, slots: [], reserved: [] };
     }
     const button = dateButtons().find(item => labelOf(item) === label);
     if (!button) return { error: 'layout' };
     const readDay = () => dayFrame(label);
     const dayView = activeDate() === label ? await waitFor(readDay) : await afterTimetableChange(button, readDay);
     if (!dayView) return { error: 'layout' };
-    if (dayView.closed) {
-      days.push({ label, slots: [], reserved: [] });
-      continue;
+    if (dayView.error) return dayView;
+    if (dayView.closed || (dayView.allAdministrative && fullDayClosures.has(label))) {
+      return { label, slots: [], reserved: [] };
     }
     let view = dayView;
     // The first window for today is usually close to the current time.
@@ -191,7 +243,7 @@ async function readBookingPage({ bookableLabels, nowClock }) {
       view = await afterTimetableChange(view.back, () => {
         const frame = readWindow();
         return frame && frame.date === label && frame.first < previousFirst ? frame : null;
-      });
+      }, true);
       if (!view) return { error: 'layout' };
     }
     if (mins(view.first) > firstNeeded) return { error: 'layout' };
@@ -212,14 +264,26 @@ async function readBookingPage({ bookableLabels, nowClock }) {
       view = await afterTimetableChange(view.forward, () => {
         const frame = readWindow();
         return frame && frame.date === label && frame.last > previousLast && frame.first <= previousLast ? frame : null;
-      });
+      }, true);
       if (!view || (view.first < previousLast && !columns.has(view.first))) return { error: 'layout' };
     }
     if (view.last !== closing) return { error: 'layout' };
     const verified = [...columns.values()];
-    days.push({ label, slots: verified.flatMap(column => column.slots), reserved: verified.flatMap(column => column.reserved) });
+    return { label, slots: verified.flatMap(column => column.slots), reserved: verified.flatMap(column => column.reserved) };
   }
-  return { days };
+  const days = [];
+  const unread = [];
+  for (const label of labels) {
+    const result = await scanDay(label);
+    if (result.unsettled) {
+      for (const remaining of labels.slice(labels.indexOf(label))) unread.push({ label: remaining, error: 'layout' });
+      break;
+    }
+    if (result.error) unread.push({ label, error: result.error });
+    else days.push(result);
+  }
+  if (!days.length) return { error: unread.some(day => day.error === 'colors') ? 'colors' : 'layout' };
+  return unread.length ? { days, unread } : { days };
 }
 
 module.exports = { signedInOnBookingSite, readBookingPage };

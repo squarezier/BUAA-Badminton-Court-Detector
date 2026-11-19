@@ -33,18 +33,21 @@
 
 - 北航每天北京时间 07:00 开放含当天在内的三天场次。候羽会在监控运行时补查这次放号，按已开放的日期标签读取尚未开始的绿色可约场次。07:00 的补查保留原定的常规检查时间。所有场馆都暂时读不到时，应用会延长重试间隔。 [北航场馆预约须知](https://cgyy.buaa.edu.cn/venue/venue-reservation/39)
 - 同一场馆、日期、时段和场号上次显示已预约，本轮变成绿色可约时，才会发送「疑似退订」卡片。同一轮发现多场时合并提醒。新放号和首次查询的场次用于更新列表和建立基准。
-- 官网临时打不开，或格子底色与预约状态不一致时，该馆显示核验异常。登录页加载失败后，可以从候羽重试。应用保留上次成功记录用于比较，当前空场和通知只采用成功核验的场馆数据。场馆预约与付款均在北航官网手动完成。
+- 闭馆活动与临时占用单独处理。部分日期读表失败时，界面列出待核验的日期，其余已核验日期继续监控。登录页加载失败后，可以从候羽重试。应用保留上次成功记录用于比较，当前空场和通知只采用成功核验的场馆数据。场馆预约与付款均在北航官网手动完成。
 - 飞书卡片按日期排列，每组列出时段、场馆、全部场号和价格，卡片底部提供相应的官网预约链接。每张最多 18 组，其余接着分卡发送。飞书限流或连接未建立时，应用等待重试，届时只发送仍可约的场次。
 
 ## 本地数据
 
 - 学号和密码在官方认证页面输入。该窗口使用独立沙箱与内存会话。退出应用会结束该会话。
-- Webhook 和签名密钥由 macOS 钥匙串、Windows DPAPI 或 Linux 密钥环加密。Linux 接受 Secret Service 及 Secret 门户提供的加密，缺少可用密钥环时仅限本次运行。系统安全存储不可用时，新连接可在内存中使用至本次退出。已有的加密配置需要等系统安全存储恢复后才可更换。
+- 飞书连接默认由系统安全存储保护。macOS 使用钥匙串，Windows 使用当前用户的 DPAPI，Linux 使用 Secret Service 或 Secret 门户。候羽打开已保存的连接时校验配置，发消息时再解密。可勾选「仅本次使用」，让连接随退出清除。如果原连接因系统密钥环锁定而无法读取，可点「重新解锁」恢复连接。将已保存的连接切换成「仅本次使用」后，旧的加密配置随之移除。
 - 飞书提醒通过 HTTPS 发送至配置对应的群。候羽在本机生成签名，群消息正文只含场地信息。点击「断开连接」可移除本机保存的推送配置，包括暂时无法解密的配置。
+
+- 三个平台的发布包都关闭 Node 调试、Node 环境参数和独立 Node 运行模式。Mac 和 Windows 还会在运行时核验应用归档。Linux 将程序安装在系统所有的目录，使用 Chromium 沙箱。下载页附有各文件的 SHA-256。
+- Windows 的 DPAPI 以操作系统用户为保护边界。在共用电脑上，请用自己的系统账户，或选择「仅本次使用」。[Electron 安全存储说明](https://www.electronjs.org/docs/latest/api/safe-storage)
 
 ## 运行和构建源码
 
-需要 Node.js 22 或更新版本。在源码根目录运行以下命令。
+需要 Node.js 22.12 或更新版本。在源码根目录运行以下命令。
 
 ```sh
 npm ci
@@ -59,9 +62,9 @@ npx electron test/desktop-production.cjs ./qa/production
 npx electron test/desktop-smoke.cjs ./qa/preview
 ```
 
-项目使用 Electron 45.3.4。安装和构建所需的 Electron 来自其官方发布。[Electron 发行说明](https://releases.electronjs.org/release/v45.3.4)
+项目使用 Electron 45.4.1。安装和构建所需的 Electron 来自其官方发布。[Electron 发行说明](https://releases.electronjs.org/release/v45.4.1)
 
-`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出文件路径。运行时目录应包含对应 Electron ZIP 与官方 `SHASUMS256.txt`。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。Linux DEB 在 Ubuntu 上用 `unzip` 与 `dpkg-deb` 构建，安装时使用官方 Chromium 沙箱。
+`scripts/package.py` 接受平台、官方运行时目录、临时目录和输出文件路径。脚本读取锁定的 Electron npm 包提供的 SHA-256，校验运行时 ZIP。缓存缺失时从 Electron 官方发布页下载。Mac 打包使用 `ditto`、`sips` 和 `codesign`。Windows x64 包使用 Python 3 和已安装的 Node.js 打包依赖。Linux DEB 在 Ubuntu 上用 `unzip` 与 `dpkg-deb` 构建，安装时使用官方 Chromium 沙箱。
 
 ```sh
 python3 scripts/package.py darwin-arm64 ./runtime ./staging ./Houyu-macOS-arm64.zip

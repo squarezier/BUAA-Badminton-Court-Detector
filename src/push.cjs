@@ -2,6 +2,7 @@
 
 const { createHmac } = require('node:crypto');
 const { CAMPUSES, VENUES, venueUrl, groupSlots, beijingClock } = require('./courts.cjs');
+const { validatedPushConnection } = require('./push-connection.cjs');
 const { productName } = require('../package.json');
 
 const PUSH_URL = 'https://www.pushplus.plus/send';
@@ -185,7 +186,9 @@ function pushRequest(connection, message) {
   return { endpoint: PUSH_URL, headers: json, body };
 }
 
-async function sendPush(connection, message, signal, fetchRequest = fetch) {
+async function sendPush(candidate, message, signal, fetchRequest = fetch) {
+  const connection = validatedPushConnection(candidate);
+  if (!connection) return { kind: 'blocked', text: '通知配置无效，请重新连接。' };
   const feishu = connection.provider === 'feishu';
   const serverChan = connection.provider === 'serverchan';
   const service = feishu ? '飞书' : serverChan ? 'Server酱' : 'PushPlus';
@@ -197,7 +200,7 @@ async function sendPush(connection, message, signal, fetchRequest = fetch) {
     }
     const timeout = AbortSignal.timeout(12000);
     response = await fetchRequest(endpoint, {
-      method: 'POST', redirect: 'error', cache: 'no-store',
+      method: 'POST', redirect: 'error', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
       headers,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       body,

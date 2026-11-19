@@ -290,7 +290,7 @@ test('notification transport retries pre-connection failures and treats a lost r
   assert.equal((await sendWithFailure('ECONNREFUSED', 'read')).kind, 'unknown');
 });
 
-test('a temporarily failed keychain refresh keeps a decrypted token usable in memory', async t => {
+test('a temporarily failed key rotation retains the readable ciphertext without caching the token', async t => {
   const root = await mkdtemp(join(tmpdir(), 'houyu-store-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'settings.json');
@@ -302,7 +302,8 @@ test('a temporarily failed keychain refresh keeps a decrypted token usable in me
     async encryptStringAsync() { throw new Error('temporary vault error'); },
   });
   await store.load();
-  assert.deepEqual(store.connection, { provider: 'pushplus', token });
+  assert.equal(store.sessionConnection, null);
+  assert.deepEqual(await store.readConnection(), { provider: 'pushplus', token });
   assert.doesNotMatch(await readFile(file, 'utf8'), /synthetic-test-token/);
 });
 

@@ -104,7 +104,7 @@ function validatedCourt({ court, start, end }) {
   return { court, start, end };
 }
 
-function validatedSnapshot(id, days, started) {
+function validatedSnapshot(id, days, started, unread = []) {
   const knownDays = calendarDates(started);
   if (!Array.isArray(days) || !days.length || days.length > knownDays.size) throw new Error('官网返回的日期范围异常。');
   const slots = new Map();
@@ -133,7 +133,14 @@ function validatedSnapshot(id, days, started) {
       reserved.set(key, slot);
     }
   }
-  return { dates: [...dates].sort(), slots: [...slots.values()], reserved: [...reserved.values()] };
+  if (!Array.isArray(unread) || days.length + unread.length > knownDays.size) throw new Error('官网核验日期异常。');
+  const unreadDates = new Set();
+  for (const day of unread) {
+    const date = knownDays.get(day?.label);
+    if (!date || dates.has(date) || unreadDates.has(date) || !['layout', 'colors'].includes(day.error)) throw new Error('官网核验日期异常。');
+    unreadDates.add(date);
+  }
+  return { dates: [...dates].sort(), unreadDates: [...unreadDates].sort(), slots: [...slots.values()], reserved: [...reserved.values()] };
 }
 
 function groupSlots(slots) {

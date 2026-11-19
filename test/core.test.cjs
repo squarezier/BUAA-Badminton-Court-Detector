@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { mkdtemp, readFile, rm } = require('node:fs/promises');
+const { link, mkdtemp, readFile, rm, stat, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { validatedSnapshot, calendarDates } = require('../src/courts.cjs');
@@ -209,6 +209,9 @@ test('Feishu sends a signed availability card with the official booking link', a
     assert.equal(url, webhook);
     assert.equal(request.method, 'POST');
     assert.equal(request.redirect, 'error');
+    assert.equal(request.credentials, 'omit');
+    assert.equal(request.referrerPolicy, 'no-referrer');
+    assert.equal(request.cache, 'no-store');
     const payload = JSON.parse(request.body);
     assert.equal(payload.timestamp, '1599360473');
     assert.equal(payload.sign, 'l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=');
@@ -227,6 +230,33 @@ test('Feishu sends a signed availability card with the official booking link', a
   assert.equal((await sendPush(connection, message, undefined, adapter)).kind, 'accepted');
 });
 
+test('invalid destinations are rejected before opening a connection', async () => {
+  let sends = 0;
+  for (const candidate of [null, { provider: 'unknown', token: 'fixture-token-long-enough' },
+    { provider: 'feishu', webhook: 'https://example.invalid/' },
+    { provider: 'pushplus', token: '  SCTfixture-token-long-enough  ' }]) {
+    const result = await sendPush(candidate, {}, undefined, async () => { sends++; });
+    assert.equal(result.kind, 'blocked');
+    assert.doesNotMatch(result.text, /fixture|example\.invalid/);
+  }
+  assert.equal(sends, 0);
+});
+
+test('settings refuse linked files and limit the new file to its owner on Unix', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'houyu-private-settings-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = join(directory, 'shared.json');
+  const file = join(directory, 'settings.json');
+  await writeFile(source, JSON.stringify({ options: { campus: 'xueyuanlu', interval: 41 } }));
+  await link(source, file);
+  const prefs = new Preferences(file, {});
+  await prefs.load();
+  assert.equal(prefs.options.campus, 'shahe');
+  assert.match(prefs.warning, /无法读取/);
+  await prefs.saveOptions({ campus: 'shahe', interval: 7 });
+  assert.equal(JSON.parse(await readFile(source, 'utf8')).options.interval, 41);
+  if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600);
+});
 test('Feishu lists each date separately and caps large notices within the request limit', async () => {
   const first = { ...slot(3, '38'), date: '2026-11-19' };
   const second = { ...slot(5, '39'), date: '2026-11-20', price: 0 };
@@ -280,11 +310,20 @@ test('a Feishu connection is sealed and survives reload', async t => {
   assert.doesNotMatch(saved, /feishu\.cn|synthetic-signing-key/);
   const reopened = new Preferences(file, vault);
   await reopened.load();
-  assert.deepEqual(reopened.connection, connection);
+  assert.equal(reopened.provider, 'feishu');
+  assert.equal(reopened.sessionConnection, null);
+  assert.deepEqual(await reopened.readConnection(), connection);
   vault.isAsyncEncryptionAvailable = async () => false;
   await assert.rejects(reopened.saveConnection(feishuConnection({ webhook })));
   assert.equal(await readFile(file, 'utf8'), saved);
-  assert.deepEqual(reopened.connection, connection);
+  await assert.rejects(reopened.readConnection());
+  vault.isAsyncEncryptionAvailable = async () => true;
+  assert.deepEqual(await reopened.readConnection(), connection);
+  assert.equal(await reopened.saveConnection(connection, true), false);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).encryptedToken, null);
+  const restart = new Preferences(file, vault);
+  await restart.load();
+  assert.equal(await restart.readConnection(), null);
 });
 
 test('an unavailable OS vault leaves a new connection in memory only', async t => {
@@ -295,11 +334,11 @@ test('an unavailable OS vault leaves a new connection in memory only', async t =
   await store.load();
   const connection = feishuConnection({ webhook, secret: 'mock-test-signing-key' });
   assert.equal(await store.saveConnection(connection), false);
-  assert.deepEqual(store.connection, connection);
+  assert.deepEqual(await store.readConnection(), connection);
   assert.doesNotMatch(await readFile(file, 'utf8'), /feishu\.cn|mock-test/);
   const reopened = new Preferences(file, { async isAsyncEncryptionAvailable() { return false; } });
   await reopened.load();
-  assert.equal(reopened.connection, null);
+  assert.equal(await reopened.readConnection(), null);
 });
 
 test('Linux persists connections only with the OS Secret Service or Secret portal provider', async t => {

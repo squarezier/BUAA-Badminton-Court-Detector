@@ -176,9 +176,11 @@ legend, #interval-form label, .shortcut h2 { font-size: 13px; font-weight: 650; 
 .choice span { display: block; padding: 3px 4px; font-size: 13px; border-radius: 4px; color: var(--muted); }
 .choice input:checked + span { background: var(--input); color: var(--selected-ink); font-weight: 620; box-shadow: 0 1px 3px #1c38422e; }
 .choice input:focus-visible + span { outline: 2px solid var(--blue); }
-input:not([type=radio]) { min-height: 34px; min-width: 0; border: 1px solid var(--control-border); border-radius: 5px; background: var(--input); box-shadow: inset 0 1px 2px #3446500a; padding: 5px 9px; font-variant-numeric: tabular-nums; }
-input:not([type=radio]):hover:not(:disabled) { border-color: #919d9e; }
-input:not([type=radio]):focus-visible { outline-offset: 1px; border-color: var(--blue); }
+input:not([type=radio], [type=checkbox]) { min-height: 34px; min-width: 0; border: 1px solid var(--control-border); border-radius: 5px; background: var(--input); box-shadow: inset 0 1px 2px #3446500a; padding: 5px 9px; font-variant-numeric: tabular-nums; }
+input:not([type=radio], [type=checkbox]):hover:not(:disabled) { border-color: #919d9e; }
+input:not([type=radio], [type=checkbox]):focus-visible { outline-offset: 1px; border-color: var(--blue); }
+.session-choice { display: flex; align-items: center; gap: 7px; margin-block: 8px; font-size: 12px; }
+.session-choice input { margin: 0; width: 15px; height: 15px; accent-color: var(--blue); }
 .choice input:not(:checked):not(:disabled):hover + span { background: var(--neutral-hover); }
 input[aria-invalid=true] { border-color: var(--error); }
 input::placeholder { color: var(--muted); }
@@ -262,7 +264,7 @@ input::placeholder { color: var(--muted); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @media (pointer: coarse) {
-  .button, .quiet, .nav, .choice span, input:not([type=radio]) { min-height: 44px; }
+  .button, .quiet, .nav, .choice span, input:not([type=radio], [type=checkbox]) { min-height: 44px; }
   .choice span { display: grid; place-content: center; }
 }
 @media (forced-colors: active) {

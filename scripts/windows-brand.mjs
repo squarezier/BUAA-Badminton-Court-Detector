@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { NtExecutable, NtExecutableResource, Data, Resource } from 'resedit';
 
-const [input, output, iconPath] = process.argv.slice(2);
+const [input, output, iconPath, digest] = process.argv.slice(2);
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const executable = NtExecutable.from(await readFile(input), { ignoreCert: true });
 const resources = NtExecutableResource.from(executable);
@@ -29,5 +29,9 @@ for (const info of versions) {
   info.outputToResourceEntries(resources.entries);
 }
 
+if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error('Invalid ASAR integrity header');
+const integrity = new TextEncoder().encode(JSON.stringify([{ file: 'resources\\app.asar', alg: 'SHA256', value: digest }]));
+const { lang, codepage } = versions[0].getAllLanguagesForStringValues()[0];
+resources.replaceResourceEntry({ type: 'INTEGRITY', id: 'ELECTRONASAR', lang, codepage, bin: integrity.buffer });
 resources.outputResource(executable);
 await writeFile(output, Buffer.from(executable.generate()), { flag: 'wx' });

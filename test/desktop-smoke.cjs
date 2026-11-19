@@ -23,11 +23,13 @@ const auditedVenues = [
 ];
 
 function fixture({ opening, courts, slots, inconsistentFill, closed = [], missingHour, switchDelay = 270,
-  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [], blankAfterClosing = false }) {
+  decorateBeforeRefresh = false, hiddenAvailableCell = false, pageDelay = 0, overlapping = false, otherCells = [], blankAfterClosing = false,
+  activityDay = -1, brokenDay = -1, reuseOnDay = -1, mirrored = false, unresolvedDay = -1 }) {
   const buttons = [...document.querySelectorAll('.date_box > div')];
   const table = document.querySelector('table');
   const head = table.createTHead();
   const body = table.createTBody();
+  const foot = mirrored ? table.createTFoot() : null;
   const closure = document.querySelector('.ivu-table-tip');
   const starts = overlapping ? [opening, opening + 4, opening + 8, 17] : [opening, opening + 5, opening + 10];
   let selected = 0;
@@ -35,6 +37,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
   const hour = value => `${String(value).padStart(2, '0')}:00`;
   function drawHeader() {
     head.replaceChildren();
+    foot?.replaceChildren();
     if (!closure.hidden || (blankAfterClosing && selected === 0)) return;
     const header = head.insertRow();
     header.insertCell().textContent = '场地';
@@ -50,6 +53,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         arrow.onclick = () => {
           page += direction;
           drawHeader();
+          if (selected === reuseOnDay) return;
           if (pageDelay) setTimeout(drawRows, pageDelay);
           else drawRows();
         };
@@ -58,6 +62,7 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
       if (page && current === first) addArrow('ivu-icon-ios-arrow-back', -1);
       if (page < starts.length - 1 && current === first + 4) addArrow('ivu-icon-ios-arrow-forward', 1);
     }
+    foot?.append(header.cloneNode(true));
   }
   function drawRows() {
     body.replaceChildren();
@@ -75,7 +80,9 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
         const special = otherCells.find(entry => entry.day === selected && entry.hour === current && entry.court === court);
         const status = special?.status ?? (available ? 'free' : disabled ? 'free disabled' : 'reserved');
         block.className = `reserveBlock position ${status}`;
-        block.textContent = '￥15.00';
+        block.textContent = special?.text ?? (selected === activityDay ? '羽毛球活动' : status === 'reserved' ? '已售' : '￥15.00');
+        if (selected === activityDay) block.className = 'reserveBlock disabled else';
+        if (selected === brokenDay) block.className = 'reserveBlock';
         if (available && inconsistentFill) block.style.backgroundColor = inconsistentFill;
         const cell = row.insertCell();
         if (special?.hidden || (available && hiddenAvailableCell)) cell.style.opacity = '0';
@@ -92,6 +99,10 @@ function fixture({ opening, courts, slots, inconsistentFill, closed = [], missin
     button.onclick = () => {
       buttons[selected].classList.remove('active');
       button.classList.add('active');
+      if (index === unresolvedDay) {
+        body.replaceChildren();
+        return;
+      }
       if (decorateBeforeRefresh) {
         const stale = table.querySelector('.reserveBlock');
         stale.style.borderColor = 'blue';
@@ -111,14 +122,14 @@ async function run() {
   const clock = hour => `${String(hour).padStart(2, '0')}:00`;
   async function readFixture(spec, at = Date.parse('2026-11-18T14:08:00+08:00')) {
     const fixtureHtml = `<style>.free{background-color:rgb(138,212,112)} .reserved,.reservation{background-color:rgb(253,75,55)} .disabled{background-color:rgb(225,225,225)}</style>
-      <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div>
+      <button><i></i>退出</button><div>开放时间 ${clock(spec.opening)} ~ 22:00</div><div class="proContent">${spec.notice ?? ''}</div>
       <div class="date_box"><div class="active"><span>11月18日</span></div><div><span>11月19日</span></div><div ${spec.disableThirdDay ? 'aria-disabled="true"' : ''}><span>11月20日</span></div></div>
       <div class="spaceTable"><table></table><p class="ivu-table-tip" hidden>当天场地暂停开放</p></div><script>(${fixture.toString()})(${JSON.stringify(spec)});</script>`;
     await page.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHtml)}`);
     assert.equal(await page.webContents.executeJavaScriptInIsolatedWorld(1201, [{ code: `(${signedInOnBookingSite.toString()})()` }]), true);
     const readOptions = { bookableLabels: [...calendarDates(at).keys()], nowClock: beijingClock(at) };
     return page.webContents.executeJavaScriptInIsolatedWorld(1201, [{
-      code: `(${readBookingPage.toString()})(${JSON.stringify(readOptions)})`,
+      code: `(${readBookingPage.toString()})(${JSON.stringify({ ...readOptions, venueName: '学院路校区体育馆主馆' })})`,
     }]);
   }
   for (const spec of auditedVenues) {
@@ -137,7 +148,24 @@ async function run() {
   const disabledAfterRelease = await readFixture({ ...auditedVenues[2], disableThirdDay: true }, morning);
   assert.deepEqual(disabledAfterRelease.days.map(day => day.label), ['11月18日', '11月19日']);
   const conflict = await readFixture({ ...auditedVenues[2], inconsistentFill: 'rgb(225, 225, 225)' });
-  assert.deepEqual(conflict, { error: 'colors' });
+  assert.deepEqual(conflict.unread, [{ label: '11月20日', error: 'colors' }]);
+  assert.deepEqual(conflict.days.map(day => day.label), ['11月18日', '11月19日']);
+  const campusNotice = '因承办活动，11月19日（周四）学院路校区体育馆主馆羽毛球场地暂停对外开放。';
+  const closedDuringEvent = { ...auditedVenues[1], notice: campusNotice, activityDay: 1, reuseOnDay: 1 };
+  const activity = await readFixture(closedDuringEvent);
+  assert.equal(activity.unread, undefined);
+  assert.deepEqual(activity.days[1], { label: '11月19日', slots: [], reserved: [] });
+  assert.equal(activity.days[2].slots.length, 7, 'other dates in the venue still show green courts');
+  const otherVenue = await readFixture({ ...closedDuringEvent, notice: campusNotice.replace('主馆', '训练馆') });
+  assert.deepEqual(otherVenue.unread, [{ label: '11月19日', error: 'layout' }], 'one hall’s closure cannot confirm another hall');
+  const isolatedFailure = await readFixture({ ...auditedVenues[1], brokenDay: 0 });
+  assert.deepEqual(isolatedFailure.unread, [{ label: '11月18日', error: 'layout' }]);
+  assert.deepEqual(isolatedFailure.days.map(day => day.slots.length), [8, 7]);
+  const unresolved = await readFixture({ ...auditedVenues[1], unresolvedDay: 1 });
+  assert.deepEqual(unresolved.days.map(day => day.label), ['11月18日']);
+  assert.deepEqual(unresolved.unread.map(day => day.label), ['11月19日', '11月20日']);
+  assert.equal(await page.webContents.executeJavaScript("document.querySelector('.date_box .active span').textContent"), '11月19日',
+    'an unresolved date request must finish before selecting another day');
   const afterClosure = await readFixture({ ...auditedVenues[1], closed: [0], switchDelay: 650 });
   assert.deepEqual(afterClosure.days.map(day => day.slots.length), [0, 8, 7]);
   const night = await readFixture({ ...auditedVenues[1], blankAfterClosing: true }, Date.parse('2026-11-18T22:01:00+08:00'));
@@ -156,12 +184,21 @@ async function run() {
     { day: 1, hour: 9, court: 1, status: 'reservation' },
     { day: 1, hour: 9, court: 2, status: 'reserved disabled' },
     { day: 1, hour: 10, court: 1, status: 'reserved', hidden: true },
+    { day: 1, hour: 11, court: 1, status: 'reserved', text: '羽毛球活动' },
+    { day: 1, hour: 11, court: 2, status: 'reserved', text: '其他安排' },
   ] });
   assert.deepEqual(separateStates.days[1].reserved.filter(slot => slot.start === '09:00').map(slot => slot.court), [3]);
   assert.deepEqual(separateStates.days[1].slots.filter(slot => slot.start === '09:00').map(slot => slot.court), [4]);
   assert.ok(!separateStates.days[1].reserved.some(slot => slot.start === '10:00' && slot.court === 1));
+  assert.deepEqual(separateStates.days[1].reserved.filter(slot => slot.start === '11:00').map(slot => slot.court), [3, 4]);
+  const reused = await readFixture({ opening: 7, courts: [1], slots: [], reuseOnDay: 1, mirrored: true });
+  assert.equal(reused.unread, undefined);
+  assert.equal(reused.days[1].slots.length, 0);
+  assert.equal(reused.days[1].reserved.length, 15, 'the client-side sold-out pager can reuse every cell');
+  const staleGreen = await readFixture({ opening: 7, courts: [1], slots: [[1, 7, [1]]], reuseOnDay: 1, mirrored: true });
+  assert.deepEqual(staleGreen.unread, [{ label: '11月19日', error: 'layout' }], 'reused greens require fresh evidence even when both hour headers agree');
   const invisible = await readFixture({ ...auditedVenues[2], hiddenAvailableCell: true });
-  assert.deepEqual(invisible, { error: 'colors' }, 'a green block hidden by its parent is unverified');
+  assert.deepEqual(invisible.unread, [{ label: '11月20日', error: 'colors' }], 'a green block hidden by its parent is unverified');
   const incomplete = await readFixture({ ...auditedVenues[0], missingHour: 19 });
   assert.deepEqual(incomplete, { error: 'layout' });
   page.destroy();

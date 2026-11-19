@@ -23,7 +23,8 @@ app.whenReady().then(async () => {
   const prefs = new Preferences(file, safeStorage);
   if (mode === 'read') {
     await prefs.load();
-    assert.deepEqual(prefs.connection, connection, 'a fresh process must decrypt the stored connection');
+    assert.deepEqual(await prefs.readConnection(), connection, 'a fresh process must decrypt the stored connection');
+    assert.equal(prefs.sessionConnection, null);
   } else {
     assert.equal(await prefs.saveConnection(connection), mode === 'write');
     const saved = await fs.readFile(file, 'utf8');

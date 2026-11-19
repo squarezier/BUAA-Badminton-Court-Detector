@@ -38,7 +38,7 @@ class CourtMonitor {
     const now = this.now();
     const venues = CAMPUSES[this.options.campus].venues.map(id => {
       const snapshot = this.snapshots.get(id);
-      return { id, label: VENUES[id].label, at: snapshot?.at ?? null, error: snapshot?.error ?? '', dates: snapshot?.dates ?? [] };
+      return { id, label: VENUES[id].label, at: snapshot?.at ?? null, error: snapshot?.error ?? '', dates: snapshot?.dates ?? [], unreadDates: snapshot?.unreadDates ?? [] };
     });
     const verified = this.auth === 'signed-in' ? [...this.snapshots.values()].filter(snapshot => !snapshot.error) : [];
     const slots = verified.flatMap(snapshot => snapshot.slots).filter(slot => startsAt(slot) > now);
@@ -163,7 +163,7 @@ class CourtMonitor {
     const now = this.now();
     const upcoming = sample.slots.filter(slot => startsAt(slot) > now);
     const prior = this.previousReservations.get(id);
-    this.snapshots.set(id, { at: now, dates: sample.dates, slots: upcoming, error: '' });
+    this.snapshots.set(id, { at: now, dates: sample.dates, unreadDates: sample.unreadDates, slots: upcoming, error: '' });
     if (prior && this.delivery.configured) {
       const available = new Map(upcoming.map(slot => [slotKey(slot), slot]));
       for (const [key, item] of this.pending) {

@@ -12,6 +12,14 @@ function feishuConnection(value) {
   return { provider: 'feishu', webhook: webhook.trim(), secret: secret.trim() };
 }
 
+function validatedPushConnection(value) {
+  if (value?.provider === 'feishu') return feishuConnection(value);
+  const token = parseToken(value?.token);
+  if (!token) return null;
+  const provider = token.startsWith('SCT') ? 'serverchan' : 'pushplus';
+  return value.provider === provider ? { provider, token } : null;
+}
+
 function decodePushConnection(plain) {
   if (typeof plain !== 'string' || plain.length > 1024) return null;
   if (plain.startsWith('{')) {
@@ -28,4 +36,4 @@ function encodePushConnection(connection) {
   return connection.provider === 'feishu' ? JSON.stringify(connection) : connection.token;
 }
 
-module.exports = { feishuConnection, decodePushConnection, encodePushConnection };
+module.exports = { feishuConnection, validatedPushConnection, decodePushConnection, encodePushConnection };

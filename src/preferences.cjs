@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs/promises');
+const { constants } = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { CAMPUSES, validOptions, validTarget, targetFields } = require('./courts.cjs');
@@ -14,7 +15,8 @@ class Preferences {
     this.file = file;
     this.storage = storage;
     this.options = { ...defaultOptions, targets: {} };
-    this.connection = null;
+    this.provider = null;
+    this.sessionConnection = null;
     this.encrypted = null;
     this.warning = '';
     this.writing = Promise.resolve();
@@ -34,16 +36,44 @@ class Preferences {
     return this.verifiedCiphertext(bytes).toString('base64');
   }
 
+  async decrypt() {
+    if (!await this.storage.isAsyncEncryptionAvailable()) throw new Error('OS encryption unavailable');
+    const plain = await this.storage.decryptStringAsync(this.verifiedCiphertext(Buffer.from(this.encrypted, 'base64')));
+    const connection = decodePushConnection(plain.result);
+    if (!connection) throw new Error('Invalid stored notification connection');
+    return { connection, rotate: plain.shouldReEncrypt };
+  }
+
+  async readConnection() {
+    if (!this.encrypted) return this.sessionConnection;
+    const { connection } = await this.decrypt();
+    this.provider = connection.provider;
+    return connection;
+  }
+
   async load() {
     let data;
+    let handle;
     try {
-      const info = await fs.stat(this.file);
-      if (info.size > 8192) throw new Error('Settings file too big');
-      data = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      const entry = await fs.lstat(this.file);
+      if (!entry.isFile() || entry.nlink !== 1) throw new Error('Invalid settings file');
+      handle = await fs.open(this.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+      const info = await handle.stat();
+      if (!info.isFile() || info.nlink !== 1 || info.dev !== entry.dev || info.ino !== entry.ino ||
+          info.size > 8192 || (process.getuid && info.uid !== process.getuid())) throw new Error('Invalid settings file');
+      const bytes = Buffer.alloc(8193);
+      let length = 0;
+      while (length < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, length, bytes.length - length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      if (length > 8192) throw new Error('Settings file too big');
+      data = JSON.parse(bytes.toString('utf8', 0, length));
     } catch (error) {
       if (error.code !== 'ENOENT') this.warning = '本地设置无法读取，已恢复默认设置。';
       return;
-    }
+    } finally { await handle?.close(); }
     if (data?.options && typeof data.options === 'object') {
       const stored = data.options;
       const campus = typeof stored.campus === 'string' && Object.hasOwn(CAMPUSES, stored.campus) ? stored.campus : defaultOptions.campus;
@@ -61,24 +91,22 @@ class Preferences {
     }
     if (typeof data?.encryptedToken !== 'string' || !/^[A-Za-z0-9+/=]{8,4096}$/.test(data.encryptedToken)) return;
     this.encrypted = data.encryptedToken;
-    let plain;
+    let decoded;
     try {
-      if (!await this.storage.isAsyncEncryptionAvailable()) throw new Error('OS encryption unavailable');
-      plain = await this.storage.decryptStringAsync(this.verifiedCiphertext(Buffer.from(this.encrypted, 'base64')));
-      this.connection = decodePushConnection(plain.result);
-      if (!this.connection) throw new Error('Invalid stored notification connection');
+      decoded = await this.decrypt();
+      this.provider = decoded.connection.provider;
     } catch {
-      this.connection = null;
+      this.provider = null;
       this.warning = '系统安全存储暂时无法读取通知配置。';
       return;
     }
-    if (plain.shouldReEncrypt) {
+    if (decoded.rotate) {
       try {
-        const renewed = await this.seal(this.connection);
+        const renewed = await this.seal(decoded.connection);
         await this.persist(this.options, renewed);
         this.encrypted = renewed;
       } catch {
-        this.warning = '系统安全存储暂时无法更新，本次仍可使用已读取的通知配置。';
+        this.warning = '加密配置暂时无法更新，已保留原有配置。';
       }
     }
   }
@@ -96,10 +124,10 @@ class Preferences {
     });
   }
 
-  saveConnection(connection) {
+  saveConnection(connection, sessionOnly = false) {
     return this.enqueue(async () => {
       let encrypted = null;
-      if (connection) {
+      if (connection && !sessionOnly) {
         try {
           if (await this.storage.isAsyncEncryptionAvailable()) {
             encrypted = await this.seal(connection);
@@ -111,7 +139,8 @@ class Preferences {
       }
       await this.persist(this.options, encrypted);
       this.encrypted = encrypted;
-      this.connection = connection;
+      this.provider = connection?.provider ?? null;
+      this.sessionConnection = encrypted ? null : connection;
       this.warning = '';
       return Boolean(encrypted);
     });
