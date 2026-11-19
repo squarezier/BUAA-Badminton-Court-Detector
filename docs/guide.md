@@ -112,7 +112,7 @@ npx electron test/desktop-production.cjs ./qa/production
 npx electron test/desktop-smoke.cjs ./qa/preview
 ```
 
-Mac 构建需要 `ditto`、`sips` 和 `codesign`，Linux DEB 使用 `dpkg-deb`。Windows x64 包可用 Python 3 和锁定的 Node.js 依赖构建。
+Mac 打包用到系统自带的 `ditto` 和 `codesign`，Linux 用 `dpkg-deb` 生成安装包。Windows x64 包可用 Python 3 和锁定的 Node.js 依赖构建。
 
 ```sh
 python3 scripts/package.py darwin-arm64 ./runtime ./staging ./Houyu-macOS-arm64.zip
